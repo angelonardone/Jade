@@ -1,5 +1,6 @@
 using JadeClient.Exceptions;
 using JadeClient.Models;
+using JadeClient.PinServer;
 using JadeClient.Protocol;
 using JadeClient.Transport;
 
@@ -28,6 +29,9 @@ try
     await rpc.ConnectAsync();
     Console.WriteLine("Connected!");
 
+    // Drain any pending data from previous interrupted sessions
+    rpc.Drain();
+
     // Get version info - the basic Phase 1 deliverable
     Console.WriteLine("\nFetching device info...");
     VersionInfo version = await rpc.GetVersionInfoAsync();
@@ -51,9 +55,56 @@ try
     var entropyResult = await rpc.AddEntropyAsync(entropy);
     Console.WriteLine($"Add entropy result: {entropyResult}");
 
+    // Test authentication with PIN server (Phase 2A)
+    if (version.HasPin)
+    {
+        Console.WriteLine("\n--- PIN Server Authentication Test ---");
+        Console.WriteLine("Using Blockstream's remote PIN server (https://j8d.io)");
+        Console.WriteLine("Please enter your PIN on the device when prompted...");
+
+        using var pinServer = new RemotePinServerHandler();
+        try
+        {
+            var authResult = await rpc.AuthUserAsync(pinServer, "mainnet");
+            if (authResult)
+            {
+                Console.WriteLine("Authentication SUCCESS! Device is now unlocked.");
+
+                // Get version info again to confirm unlocked state
+                var updatedVersion = await rpc.GetVersionInfoAsync();
+                Console.WriteLine($"  Device state: {updatedVersion.State}");
+                Console.WriteLine($"  Is Unlocked : {updatedVersion.IsUnlocked}");
+
+                // Logout to re-lock
+                Console.WriteLine("\nLogging out (re-locking device)...");
+                var logoutResult = await rpc.LogoutAsync();
+                Console.WriteLine($"Logout result: {logoutResult}");
+            }
+            else
+            {
+                Console.WriteLine("Authentication FAILED.");
+            }
+        }
+        catch (JadeRpcException ex)
+        {
+            Console.WriteLine($"Auth RPC error {ex.ErrorCode}: {ex.Message}");
+            if (ex.IsUserCancelled)
+                Console.WriteLine("  -> User cancelled PIN entry on device.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Auth error: {ex.Message}");
+        }
+    }
+    else
+    {
+        Console.WriteLine("\nDevice has no PIN configured - skipping authentication test.");
+        Console.WriteLine("Use Jade's mobile app to set up a PIN first.");
+    }
+
     await rpc.DisconnectAsync();
     Console.WriteLine("\nDisconnected from Jade.");
-    Console.WriteLine("\nPhase 1 Protocol Test: SUCCESS!");
+    Console.WriteLine("\nTest Complete!");
 }
 catch (JadeConnectionException ex)
 {

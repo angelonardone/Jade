@@ -1,5 +1,6 @@
 using JadeClient.Exceptions;
 using JadeClient.Models;
+using JadeClient.PinServer;
 using JadeClient.Transport;
 
 namespace JadeClient.Protocol;
@@ -157,6 +158,171 @@ public class JadeRpc : IDisposable
         };
 
         return await CallAsync<bool>("add_entropy", parameters, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Authenticate user with PIN via the PIN server.
+    /// This initiates the Blind Oracle protocol to unlock the device.
+    /// </summary>
+    /// <param name="pinServerHandler">PIN server handler (remote or local).</param>
+    /// <param name="network">Network to authenticate for.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if authentication succeeded, false otherwise.</returns>
+    public async Task<bool> AuthUserAsync(
+        IPinServerHandler pinServerHandler,
+        string network = "mainnet",
+        CancellationToken cancellationToken = default)
+    {
+        if (pinServerHandler == null)
+            throw new ArgumentNullException(nameof(pinServerHandler));
+
+        // Extended timeout for user interaction (PIN entry on device)
+        var interactiveTimeout = TimeSpan.FromMinutes(5);
+
+        // Send initial auth_user request
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["epoch"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
+        };
+
+        var response = await CallAsync("auth_user", parameters, interactiveTimeout, cancellationToken);
+
+        // Handle http_request loop (may require multiple round-trips with PIN server)
+        while (response.HasHttpRequest)
+        {
+            var httpRequest = CborSerializer.ExtractHttpRequest(response.Result);
+            if (httpRequest == null)
+            {
+                throw new JadeException("Failed to extract http_request from response");
+            }
+
+            // Extract the endpoint from the URL
+            var endpoint = ExtractEndpoint(httpRequest.Urls.FirstOrDefault() ?? "");
+
+            // Process via PIN server handler (remote or local)
+            string pinServerResponse;
+            try
+            {
+                pinServerResponse = await pinServerHandler.ProcessRequestAsync(
+                    endpoint,
+                    httpRequest.Data,
+                    cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                throw new JadeException($"PIN server request failed: {ex.Message}", ex);
+            }
+
+            // Parse the PIN server JSON response and send it back to Jade
+            // The response body becomes the params for the on-reply RPC call
+            Dictionary<string, object>? replyParams = null;
+            try
+            {
+                replyParams = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(pinServerResponse);
+            }
+            catch
+            {
+                // If not valid JSON, wrap it
+                replyParams = new Dictionary<string, object> { ["body"] = pinServerResponse };
+            }
+
+            response = await CallAsync(httpRequest.OnReply, replyParams, interactiveTimeout, cancellationToken);
+        }
+
+        // Check final result
+        if (!response.IsSuccess)
+        {
+            if (response.Error != null)
+            {
+                throw new JadeRpcException(
+                    response.Error.Code,
+                    response.Error.Message,
+                    response.Error.Data);
+            }
+            return false;
+        }
+
+        // Result should be true for successful authentication
+        return response.Result is bool success && success;
+    }
+
+    /// <summary>
+    /// Logout from the device (lock the wallet).
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<bool> LogoutAsync(CancellationToken cancellationToken = default)
+    {
+        var response = await CallAsync("logout", cancellationToken: cancellationToken);
+        return response.IsSuccess;
+    }
+
+    /// <summary>
+    /// Update the PIN server configuration on the device.
+    /// This is required when switching to a custom or local PIN server.
+    /// </summary>
+    /// <param name="urlA">Primary PIN server URL.</param>
+    /// <param name="urlB">Secondary PIN server URL (e.g., Tor onion address). Can be null.</param>
+    /// <param name="pubkey">Server's public key (33 bytes, compressed secp256k1).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<bool> UpdatePinServerAsync(
+        string urlA,
+        string? urlB,
+        byte[] pubkey,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["urlA"] = urlA,
+            ["pubkey"] = pubkey
+        };
+
+        if (!string.IsNullOrEmpty(urlB))
+        {
+            parameters["urlB"] = urlB;
+        }
+
+        return await CallAsync<bool>("update_pinserver", parameters, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Reset the PIN server configuration to Blockstream defaults.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    public async Task<bool> ResetPinServerAsync(CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["reset_details"] = true,
+            ["reset_certificate"] = true
+        };
+
+        return await CallAsync<bool>("update_pinserver", parameters, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Extract the endpoint path from a full URL.
+    /// </summary>
+    private static string ExtractEndpoint(string url)
+    {
+        if (string.IsNullOrEmpty(url))
+            return "/";
+
+        try
+        {
+            var uri = new Uri(url);
+            return uri.AbsolutePath;
+        }
+        catch
+        {
+            // If URL parsing fails, try to extract path manually
+            var pathStart = url.IndexOf('/', url.IndexOf("://") + 3);
+            if (pathStart >= 0)
+            {
+                return url[pathStart..];
+            }
+            return "/";
+        }
     }
 
     /// <summary>

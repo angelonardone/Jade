@@ -233,7 +233,16 @@ public static class CborSerializer
 
             if (paramsDict.TryGetValue("data", out var dataObj))
             {
-                proxy.Data = dataObj?.ToString();
+                // Data can be a dictionary (for JSON) or a string
+                if (dataObj is Dictionary<string, object?> dataDict)
+                {
+                    // Convert dictionary to JSON string
+                    proxy.Data = System.Text.Json.JsonSerializer.Serialize(dataDict);
+                }
+                else
+                {
+                    proxy.Data = dataObj?.ToString();
+                }
             }
         }
 
