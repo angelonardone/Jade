@@ -836,7 +836,32 @@ All tests passed successfully:
 - ECIES Cross-Key: Encrypt to one key, decrypt with another
 - Testnet Keys: tpub and testnet pubkeys working
 - Operations Count: Counter incremented correctly
+- **Seed Isolation: PASS** - Wallet seed is NOT accessible in HSM mode
 ```
+
+### Security: Seed Isolation
+
+A critical security feature ensures that when HSM mode is activated, the wallet's master seed is completely wiped from memory:
+
+1. **On HSM Activation** (`dashboard.c`): After `hsm_activate()` succeeds, `keychain_clear()` is called to wipe the seed
+2. **Message Dispatch** (`dashboard.c`): HSM methods are allowed when HSM is active, even without keychain
+3. **Verification Test** (`HsmTest/Program.cs`): Attempts to call wallet functions (e.g., `GetXpubAsync`) which should fail
+
+```c
+// In dashboard.c - HSM activation handler
+if (hsm_activate(keychain_get()->seed, keychain_get()->seed_len,
+                (uint8_t)keychain_get_userdata())) {
+    // CRITICAL: Clear the keychain to wipe the seed from memory
+    keychain_clear();
+    // ... show success message
+}
+```
+
+This ensures:
+- HSM keys are derived from the seed at activation time and stored in HSM module
+- The master seed is then wiped from memory
+- Wallet operations (requiring the seed) fail with "hardware locked" error
+- HSM operations continue to work using the pre-derived keys
 
 ### Key Implementation Details
 
@@ -888,3 +913,4 @@ bip32_key_to_base58(&key, BIP32_FLAG_KEY_PUBLIC, xpub_out);
 | 0.2 | 2026-01-08 | Draft | Finalized design decisions: dual network support, Schnorr+ECDSA signing, configurable auto-lock timeout, no confirmation (automatic), no key export |
 | 0.3 | 2026-01-08 | Draft | Removed `hsm_set_timeout` RPC - timeout must be configured via device UI only for security |
 | 1.0 | 2026-01-08 | Release | Implementation complete - all RPC methods implemented and tested |
+| 1.1 | 2026-01-08 | Security | Added seed isolation: keychain cleared after HSM activation to ensure wallet seed is not accessible in HSM mode |

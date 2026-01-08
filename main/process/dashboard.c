@@ -555,8 +555,14 @@ static void dispatch_message(jade_process_t* process)
 #endif // CONFIG_RETURN_CAMERA_IMAGES
 #endif // CONFIG_DEBUG_MODE
     } else {
-        // Methods only available after user authorised
-        if (!KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process)) {
+        // Methods only available after user authorised (or HSM mode active)
+        // HSM operations are allowed when HSM mode is active, even without keychain
+        const bool hsm_method = IS_METHOD("hsm_get_info") || IS_METHOD("hsm_get_pubkey")
+            || IS_METHOD("hsm_get_xpub") || IS_METHOD("hsm_sign") || IS_METHOD("hsm_ecdh")
+            || IS_METHOD("hsm_encrypt") || IS_METHOD("hsm_decrypt") || IS_METHOD("hsm_lock");
+        const bool hsm_allowed = hsm_method && hsm_is_active();
+
+        if (!KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process) && !hsm_allowed) {
             // Reject the message as hw locked
             jade_process_reject_message(
                 process, CBOR_RPC_HW_LOCKED, "Cannot process message - hardware locked or uninitialized");
@@ -2478,6 +2484,9 @@ static void handle_session(void)
                         // Activate HSM mode with current seed
                         if (hsm_activate(keychain_get()->seed, keychain_get()->seed_len,
                                         (uint8_t)keychain_get_userdata())) {
+                            // CRITICAL: Clear the keychain to wipe the seed from memory
+                            // This ensures the master seed is not accessible in HSM mode
+                            keychain_clear();
                             const char* message[] = { "HSM Mode", "activated" };
                             await_message_activity(message, 2);
                         } else {

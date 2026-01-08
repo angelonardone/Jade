@@ -272,8 +272,47 @@ class Program
             if (finalInfo.AutoLockRemaining > 0)
                 Console.WriteLine($"  Auto-lock remaining: {finalInfo.AutoLockRemaining}s");
 
-            // Step 15: Lock HSM (optional)
-            Console.WriteLine("\n--- Step 15: HSM Lock ---");
+            // Step 15: CRITICAL SECURITY TEST - Verify seed isolation
+            Console.WriteLine("\n--- Step 15: Seed Isolation Test ---");
+            Console.WriteLine("Testing that wallet seed is NOT accessible in HSM mode...");
+
+            // Try to call a wallet function that requires the seed
+            // This should FAIL if the seed was properly wiped after HSM activation
+            const uint HARDENED = 0x80000000;
+            uint[] walletPath = { 84 + HARDENED, 0 + HARDENED, 0 + HARDENED };
+
+            try
+            {
+                Console.WriteLine("  Attempting to get wallet xpub (m/84'/0'/0')...");
+                var walletXpub = await rpc.GetXpubAsync("mainnet", walletPath);
+                // If we get here, the seed was NOT wiped - SECURITY FAILURE!
+                Console.WriteLine($"  WARNING: Wallet xpub returned: {walletXpub}");
+                Console.WriteLine("  *** SECURITY FAILURE: Seed is still accessible in HSM mode! ***");
+                Console.WriteLine("  *** The keychain should have been cleared after HSM activation ***");
+            }
+            catch (Exception ex)
+            {
+                // Expected behavior - the wallet operation should fail
+                Console.WriteLine($"  Expected error: {ex.Message}");
+                Console.WriteLine("  PASS: Wallet seed is NOT accessible in HSM mode");
+                Console.WriteLine("  The keychain was properly cleared after HSM activation");
+            }
+
+            // Also verify HSM operations still work
+            Console.WriteLine("\n  Verifying HSM operations still work...");
+            try
+            {
+                var testPubkey = await rpc.HsmGetPubkeyAsync("mainnet", 99);
+                Console.WriteLine($"  HSM pubkey at index 99: {ToHex(testPubkey.Pubkey)}");
+                Console.WriteLine("  PASS: HSM operations work correctly");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  FAIL: HSM operation failed: {ex.Message}");
+            }
+
+            // Step 16: Lock HSM (optional)
+            Console.WriteLine("\n--- Step 16: HSM Lock ---");
             Console.Write("Do you want to lock HSM mode? (y/n): ");
             var input = Console.ReadLine()?.Trim().ToLower();
 
