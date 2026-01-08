@@ -258,6 +258,58 @@ public class JadeRpc : IDisposable
     }
 
     /// <summary>
+    /// Get an extended public key (xpub) for a derivation path.
+    /// </summary>
+    /// <param name="network">Network (e.g., "mainnet", "testnet").</param>
+    /// <param name="path">BIP32 derivation path as an array of integers.
+    /// Use values with 0x80000000 added for hardened derivation (e.g., 84' = 2147483732).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The extended public key as a base58-encoded string.</returns>
+    public async Task<string> GetXpubAsync(
+        string network,
+        uint[] path,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["path"] = path.Select(p => (object)p).ToArray()
+        };
+
+        return await CallAsync<string>("get_xpub", parameters, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
+    /// Get a receive address for a given derivation path and address type.
+    /// The address will be displayed on the Jade screen for user verification.
+    /// </summary>
+    /// <param name="network">Network (e.g., "mainnet", "testnet").</param>
+    /// <param name="path">Full BIP32 derivation path including account and address index
+    /// (e.g., m/84'/0'/0'/0/0 for the first receiving address).</param>
+    /// <param name="variant">Address type variant:
+    /// - "pkh(k)" for Legacy P2PKH (BIP44)
+    /// - "sh(wpkh(k))" for Nested SegWit P2SH-P2WPKH (BIP49)
+    /// - "wpkh(k)" for Native SegWit P2WPKH (BIP84)
+    /// - "tr(k)" for Taproot P2TR (BIP86)</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The generated address string.</returns>
+    public async Task<string> GetReceiveAddressAsync(
+        string network,
+        uint[] path,
+        string variant,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["path"] = path.Select(p => (object)p).ToArray(),
+            ["variant"] = variant
+        };
+
+        return await CallAsync<string>("get_receive_address", parameters, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
     /// Update the PIN server configuration on the device.
     /// This is required when switching to a custom or local PIN server.
     /// </summary>
