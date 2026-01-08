@@ -545,7 +545,8 @@ gui_activity_t* make_session_activity(void)
     btn_data_t hdrbtns[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_SESSION_EXIT },
         { .txt = NULL, .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE } };
 
-    btn_data_t menubtns[] = { { .txt = "Log Out", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SESSION_LOGOUT }
+    btn_data_t menubtns[] = { { .txt = "Log Out", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SESSION_LOGOUT },
+        { .txt = "HSM Mode", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SESSION_HSM }
 #ifndef CONFIG_ETH_USE_OPENETH
         ,
         { .txt = "Sleep", .font = GUI_DEFAULT_FONT, .ev_id = BTN_SESSION_SLEEP }

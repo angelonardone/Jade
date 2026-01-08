@@ -65,6 +65,7 @@ void __wrap_abort(void);
 #ifndef CONFIG_LIBJADE_NO_GUI
 #include "./gui.c"
 #endif // CONFIG_LIBJADE_NO_GUI
+#include "./hsm.c"
 #include "./identity.c"
 #ifndef CONFIG_LIBJADE
 #include "./idletimer.c"
@@ -95,6 +96,7 @@ void __wrap_abort(void);
 #include "./process/get_commitments.c"
 #include "./process/get_identity_pubkey.c"
 #include "./process/get_identity_shared_key.c"
+#include "./process/hsm_process.c"
 #include "./process/get_master_blinding_key.c"
 #include "./process/get_otp_code.c"
 #include "./process/get_receive_address.c"

@@ -120,7 +120,7 @@ try
                 // Get receive addresses (displayed on Jade screen for verification)
                 Console.WriteLine("\n--- Receive Addresses (first address of each type) ---");
                 Console.WriteLine("(Address will be shown on Jade screen for verification)");
-
+/*
                 // BIP84 Native SegWit address: m/84'/0'/0'/0/0
                 uint[] bip84AddrPath = { 84 + HARDENED, 0 + HARDENED, 0 + HARDENED, 0, 0 };
                 var segwitAddr = await rpc.GetReceiveAddressAsync("mainnet", bip84AddrPath, "wpkh(k)");
@@ -134,6 +134,102 @@ try
                 Console.WriteLine($"\nBIP86 Taproot (first receive):");
                 Console.WriteLine($"  Path: {FormatBip32Path(bip86AddrPath)}");
                 Console.WriteLine($"  Address: {taprootAddr}");
+*/
+                // Test HSM functionality
+                Console.WriteLine("\n\n--- HSM Mode Test ---");
+                Console.WriteLine("Testing HSM cryptographic operations...");
+
+                // Check HSM status
+                Console.WriteLine("\nChecking HSM status...");
+                var hsmInfo = await rpc.HsmGetInfoAsync();
+                Console.WriteLine($"  HSM Active: {hsmInfo.Active}");
+
+                if (hsmInfo.Active)
+                {
+                    Console.WriteLine($"  Networks: {string.Join(", ", hsmInfo.Networks)}");
+                    Console.WriteLine($"  Mainnet Path: {hsmInfo.MainnetRootPath}");
+                    Console.WriteLine($"  Testnet Path: {hsmInfo.TestnetRootPath}");
+                    if (hsmInfo.MainnetRootPubkey != null)
+                        Console.WriteLine($"  Mainnet Root Pubkey: {BitConverter.ToString(hsmInfo.MainnetRootPubkey).Replace("-", "").ToLowerInvariant()}");
+                    Console.WriteLine($"  Operations Count: {hsmInfo.OperationsCount}");
+                    Console.WriteLine($"  Auto-Lock Timeout: {(hsmInfo.AutoLockTimeout == 0 ? "Disabled" : $"{hsmInfo.AutoLockTimeout}s")}");
+
+                    // Test HSM signing
+                    Console.WriteLine("\n--- HSM Signing Test ---");
+
+                    // Get public key at index 0
+                    var pubkeyResult = await rpc.HsmGetPubkeyAsync("mainnet", 0);
+                    Console.WriteLine($"  HSM Pubkey at index 0:");
+                    Console.WriteLine($"    Path: {pubkeyResult.Path}");
+                    Console.WriteLine($"    Pubkey: {BitConverter.ToString(pubkeyResult.Pubkey).Replace("-", "").ToLowerInvariant()}");
+
+                    // Sign a test message hash
+                    byte[] testHash = new byte[32];
+                    Random.Shared.NextBytes(testHash);
+                    Console.WriteLine($"\n  Signing test hash: {BitConverter.ToString(testHash).Replace("-", "").ToLowerInvariant()}");
+
+                    // Schnorr signature
+                    var schnorrResult = await rpc.HsmSignAsync("mainnet", 0, testHash, "schnorr");
+                    Console.WriteLine($"\n  Schnorr Signature ({schnorrResult.Algorithm}):");
+                    Console.WriteLine($"    Signature: {BitConverter.ToString(schnorrResult.Signature).Replace("-", "").ToLowerInvariant()}");
+                    Console.WriteLine($"    Pubkey: {BitConverter.ToString(schnorrResult.Pubkey).Replace("-", "").ToLowerInvariant()}");
+
+                    // ECDSA signature
+                    var ecdsaResult = await rpc.HsmSignAsync("mainnet", 0, testHash, "ecdsa");
+                    Console.WriteLine($"\n  ECDSA Signature ({ecdsaResult.Algorithm}):");
+                    Console.WriteLine($"    Signature (DER): {BitConverter.ToString(ecdsaResult.Signature).Replace("-", "").ToLowerInvariant()}");
+                    Console.WriteLine($"    Pubkey: {BitConverter.ToString(ecdsaResult.Pubkey).Replace("-", "").ToLowerInvariant()}");
+
+                    // Test ECIES encryption/decryption
+                    Console.WriteLine("\n--- HSM Encryption Test ---");
+                    string originalMessage = "Hello, HSM encryption test!";
+                    byte[] plaintext = System.Text.Encoding.UTF8.GetBytes(originalMessage);
+                    Console.WriteLine($"  Original message: {originalMessage}");
+                    Console.WriteLine($"  Plaintext bytes: {BitConverter.ToString(plaintext).Replace("-", "").ToLowerInvariant()}");
+
+                    // Encrypt to self (using our own pubkey)
+                    var encryptResult = await rpc.HsmEncryptAsync("mainnet", 0, plaintext);
+                    Console.WriteLine($"\n  Encrypted:");
+                    Console.WriteLine($"    Ciphertext: {BitConverter.ToString(encryptResult.Ciphertext).Replace("-", "").ToLowerInvariant()}");
+                    Console.WriteLine($"    Nonce: {BitConverter.ToString(encryptResult.Nonce).Replace("-", "").ToLowerInvariant()}");
+                    Console.WriteLine($"    Tag: {BitConverter.ToString(encryptResult.Tag).Replace("-", "").ToLowerInvariant()}");
+                    Console.WriteLine($"    Ephemeral Pubkey: {BitConverter.ToString(encryptResult.EphemeralPubkey).Replace("-", "").ToLowerInvariant()}");
+
+                    // Decrypt
+                    var decryptedBytes = await rpc.HsmDecryptAsync(
+                        "mainnet", 0,
+                        encryptResult.Ciphertext,
+                        encryptResult.Nonce,
+                        encryptResult.Tag,
+                        encryptResult.EphemeralPubkey);
+                    string decryptedMessage = System.Text.Encoding.UTF8.GetString(decryptedBytes);
+                    Console.WriteLine($"\n  Decrypted message: {decryptedMessage}");
+                    Console.WriteLine($"  Encryption/Decryption test: {(decryptedMessage == originalMessage ? "PASSED" : "FAILED")}");
+
+                    // Test ECDH
+                    Console.WriteLine("\n--- HSM ECDH Test ---");
+                    // Use our own pubkey at index 1 as "their" pubkey for testing
+                    var theirPubkeyResult = await rpc.HsmGetPubkeyAsync("mainnet", 1);
+                    Console.WriteLine($"  Their pubkey (index 1): {BitConverter.ToString(theirPubkeyResult.Pubkey).Replace("-", "").ToLowerInvariant()}");
+
+                    var sharedSecret = await rpc.HsmEcdhAsync("mainnet", 0, theirPubkeyResult.Pubkey);
+                    Console.WriteLine($"  Shared secret: {BitConverter.ToString(sharedSecret).Replace("-", "").ToLowerInvariant()}");
+
+                    // Get xpub
+                    Console.WriteLine("\n--- HSM XPub ---");
+                    var hsmXpub = await rpc.HsmGetXpubAsync("mainnet");
+                    Console.WriteLine($"  Path: {hsmXpub.Path}");
+                    Console.WriteLine($"  XPub: {hsmXpub.Xpub}");
+
+                    // Check updated HSM info
+                    hsmInfo = await rpc.HsmGetInfoAsync();
+                    Console.WriteLine($"\n  Total HSM operations: {hsmInfo.OperationsCount}");
+                }
+                else
+                {
+                    Console.WriteLine("  HSM mode is not active.");
+                    Console.WriteLine("  To test HSM features, unlock HSM mode from the Jade device menu.");
+                }
 
                 // Logout to re-lock
                 Console.WriteLine("\nLogging out (re-locking device)...");

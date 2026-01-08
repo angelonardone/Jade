@@ -780,6 +780,106 @@ When auto-lock is enabled:
 
 ---
 
+## Implementation Status
+
+**Status: COMPLETE**
+
+All phases have been implemented and tested successfully.
+
+### Firmware Implementation
+
+| Component | File | Status |
+|-----------|------|--------|
+| HSM Core Module | `main/hsm.h`, `main/hsm.c` | Complete |
+| RPC Handlers | `main/process/hsm_process.c` | Complete |
+| Dashboard Integration | `main/ui/dashboard.c` | Complete |
+| Button Events | `main/button_events.h` | Complete |
+
+### C# Client Implementation
+
+| Component | File | Status |
+|-----------|------|--------|
+| HSM RPC Methods | `jade-csharp-client/src/JadeClient/Protocol/JadeRpc.cs` | Complete |
+| HSM Data Models | `jade-csharp-client/src/JadeClient/Models/HsmModels.cs` | Complete |
+| HSM Test Sample | `jade-csharp-client/samples/HsmTest/Program.cs` | Complete |
+| BasicUsage Integration | `jade-csharp-client/samples/BasicUsage/Program.cs` | Complete |
+
+### Implemented RPC Methods
+
+| Method | Description | Tested |
+|--------|-------------|--------|
+| `hsm_get_info` | Get HSM status, networks, paths, pubkeys, counters | Yes |
+| `hsm_get_pubkey` | Get public key at index | Yes |
+| `hsm_get_xpub` | Get extended public key (base58) | Yes |
+| `hsm_sign` | Sign hash (Schnorr or ECDSA) | Yes |
+| `hsm_ecdh` | Compute ECDH shared secret | Yes |
+| `hsm_encrypt` | ECIES encryption (AES-256-GCM) | Yes |
+| `hsm_decrypt` | ECIES decryption | Yes |
+| `hsm_lock` | Deactivate HSM mode | Yes |
+
+### Test Results (2026-01-08)
+
+All tests passed successfully:
+
+```
+--- HSM Test Summary ---
+- Device Unlock: PIN authentication successful
+- HSM Activation: Mode activated via device menu
+- HSM Get Info: Returns networks, paths, pubkeys, counters
+- HSM Get XPub: xpub6DXuQW1Q2Jvj3TVFQpw7YidMMBuBCWBbytftitSDWQc8pey...
+- HSM Get Pubkeys: Retrieved pubkeys at indices 0, 1, 2
+- Schnorr Signing: 64-byte BIP-340 signature
+- ECDSA Signing: 70-byte DER-encoded signature
+- ECDH: 32-byte shared secret, symmetric verified
+- ECIES Encrypt/Decrypt: Round-trip encryption successful
+- ECIES with AAD: Additional authenticated data works
+- ECIES Cross-Key: Encrypt to one key, decrypt with another
+- Testnet Keys: tpub and testnet pubkeys working
+- Operations Count: Counter incremented correctly
+```
+
+### Key Implementation Details
+
+#### CBOR Response Format
+
+All HSM RPC handlers use `rpc_init_cbor()` to properly format responses:
+
+```c
+CborEncoder root_map;
+cbor_encoder_create_map(&root_encoder, &root_map, 2);  // id + result
+
+const char* id = NULL;
+size_t id_len = 0;
+rpc_get_id_ptr(&process->ctx.value, &id, &id_len);
+rpc_init_cbor(&root_map, id, id_len);  // Adds "id" and "result" key
+
+CborEncoder result_map;
+cbor_encoder_create_map(&root_map, &result_map, N);  // N fields in result
+// ... add result fields ...
+```
+
+#### XPub Generation
+
+Uses `bip32_key_init()` with computed hash160 for proper xpub serialization:
+
+```c
+uint8_t hash160[HASH160_LEN];
+wally_hash160(root_pubkey, EC_PUBLIC_KEY_LEN, hash160, sizeof(hash160));
+
+bip32_key_init(
+    version, 4, HSM_PATH_HSM_BRANCH,
+    root_chaincode, 32,
+    root_pubkey, EC_PUBLIC_KEY_LEN,
+    NULL, 0,  // no private key
+    hash160, sizeof(hash160),
+    NULL, 0,  // no parent160
+    &key);
+
+bip32_key_to_base58(&key, BIP32_FLAG_KEY_PUBLIC, xpub_out);
+```
+
+---
+
 ## Revision History
 
 | Version | Date | Author | Changes |
@@ -787,3 +887,4 @@ When auto-lock is enabled:
 | 0.1 | 2026-01-08 | Draft | Initial design document |
 | 0.2 | 2026-01-08 | Draft | Finalized design decisions: dual network support, Schnorr+ECDSA signing, configurable auto-lock timeout, no confirmation (automatic), no key export |
 | 0.3 | 2026-01-08 | Draft | Removed `hsm_set_timeout` RPC - timeout must be configured via device UI only for security |
+| 1.0 | 2026-01-08 | Release | Implementation complete - all RPC methods implemented and tested |

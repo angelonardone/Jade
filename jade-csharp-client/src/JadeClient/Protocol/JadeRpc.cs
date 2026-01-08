@@ -352,6 +352,268 @@ public class JadeRpc : IDisposable
         return await CallAsync<bool>("update_pinserver", parameters, cancellationToken: cancellationToken);
     }
 
+    #region HSM Mode Methods
+
+    /// <summary>
+    /// Get HSM mode status and information.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>HSM info including active status, networks, paths, and operations count.</returns>
+    public async Task<HsmInfo> HsmGetInfoAsync(CancellationToken cancellationToken = default)
+    {
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_get_info", cancellationToken: cancellationToken);
+        return ParseHsmInfo(result);
+    }
+
+    /// <summary>
+    /// Get a public key from the HSM at a specific index.
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened, 0 to 2^31-1).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The public key (33 bytes, compressed) and derivation path.</returns>
+    public async Task<HsmPubkeyResult> HsmGetPubkeyAsync(
+        string network,
+        uint index,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index
+        };
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_get_pubkey", parameters, cancellationToken: cancellationToken);
+        return new HsmPubkeyResult
+        {
+            Pubkey = result.TryGetValue("pubkey", out var pk) && pk is byte[] pubkeyBytes ? pubkeyBytes : Array.Empty<byte>(),
+            Path = result.TryGetValue("path", out var path) ? path?.ToString() ?? "" : ""
+        };
+    }
+
+    /// <summary>
+    /// Get an extended public key (xpub) for the HSM root key.
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The xpub string and derivation path.</returns>
+    public async Task<HsmXpubResult> HsmGetXpubAsync(
+        string network,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network
+        };
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_get_xpub", parameters, cancellationToken: cancellationToken);
+        return new HsmXpubResult
+        {
+            Xpub = result.TryGetValue("xpub", out var xpub) ? xpub?.ToString() ?? "" : "",
+            Path = result.TryGetValue("path", out var path) ? path?.ToString() ?? "" : ""
+        };
+    }
+
+    /// <summary>
+    /// Sign a 32-byte hash using an HSM key.
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="hash">32-byte hash to sign.</param>
+    /// <param name="algorithm">Signature algorithm ("schnorr" or "ecdsa"). Defaults to "schnorr".</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The signature, public key, and algorithm used.</returns>
+    public async Task<HsmSignResult> HsmSignAsync(
+        string network,
+        uint index,
+        byte[] hash,
+        string algorithm = "schnorr",
+        CancellationToken cancellationToken = default)
+    {
+        if (hash.Length != 32)
+            throw new ArgumentException("Hash must be 32 bytes", nameof(hash));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["hash"] = hash,
+            ["algo"] = algorithm
+        };
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_sign", parameters, cancellationToken: cancellationToken);
+        return new HsmSignResult
+        {
+            Signature = result.TryGetValue("signature", out var sig) && sig is byte[] sigBytes ? sigBytes : Array.Empty<byte>(),
+            Pubkey = result.TryGetValue("pubkey", out var pk) && pk is byte[] pubkeyBytes ? pubkeyBytes : Array.Empty<byte>(),
+            Algorithm = result.TryGetValue("algo", out var algo) ? algo?.ToString() ?? "schnorr" : "schnorr"
+        };
+    }
+
+    /// <summary>
+    /// Compute an ECDH shared secret using an HSM key.
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="theirPubkey">The other party's public key (33 or 65 bytes).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The 32-byte shared secret.</returns>
+    public async Task<byte[]> HsmEcdhAsync(
+        string network,
+        uint index,
+        byte[] theirPubkey,
+        CancellationToken cancellationToken = default)
+    {
+        if (theirPubkey.Length != 33 && theirPubkey.Length != 65)
+            throw new ArgumentException("Public key must be 33 (compressed) or 65 (uncompressed) bytes", nameof(theirPubkey));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["their_pubkey"] = theirPubkey
+        };
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_ecdh", parameters, cancellationToken: cancellationToken);
+        return result.TryGetValue("shared_secret", out var ss) && ss is byte[] secretBytes ? secretBytes : Array.Empty<byte>();
+    }
+
+    /// <summary>
+    /// Encrypt data using ECIES with an HSM key.
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="plaintext">Data to encrypt (max 1024 bytes).</param>
+    /// <param name="theirPubkey">Optional recipient public key. If null, encrypts to self.</param>
+    /// <param name="aad">Optional additional authenticated data.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Encrypted data components (ciphertext, nonce, tag, ephemeral_pubkey).</returns>
+    public async Task<HsmEncryptResult> HsmEncryptAsync(
+        string network,
+        uint index,
+        byte[] plaintext,
+        byte[]? theirPubkey = null,
+        byte[]? aad = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (plaintext.Length > 1024)
+            throw new ArgumentException("Plaintext must not exceed 1024 bytes", nameof(plaintext));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["plaintext"] = plaintext
+        };
+
+        if (theirPubkey != null)
+            parameters["their_pubkey"] = theirPubkey;
+        if (aad != null)
+            parameters["aad"] = aad;
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_encrypt", parameters, cancellationToken: cancellationToken);
+        return new HsmEncryptResult
+        {
+            Ciphertext = result.TryGetValue("ciphertext", out var ct) && ct is byte[] ctBytes ? ctBytes : Array.Empty<byte>(),
+            Nonce = result.TryGetValue("nonce", out var n) && n is byte[] nonceBytes ? nonceBytes : Array.Empty<byte>(),
+            Tag = result.TryGetValue("tag", out var t) && t is byte[] tagBytes ? tagBytes : Array.Empty<byte>(),
+            EphemeralPubkey = result.TryGetValue("ephemeral_pubkey", out var ep) && ep is byte[] epBytes ? epBytes : Array.Empty<byte>()
+        };
+    }
+
+    /// <summary>
+    /// Decrypt data using ECIES with an HSM key.
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="ciphertext">Encrypted data.</param>
+    /// <param name="nonce">12-byte nonce.</param>
+    /// <param name="tag">16-byte authentication tag.</param>
+    /// <param name="ephemeralPubkey">33-byte ephemeral public key.</param>
+    /// <param name="aad">Optional additional authenticated data (must match encryption).</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The decrypted plaintext.</returns>
+    public async Task<byte[]> HsmDecryptAsync(
+        string network,
+        uint index,
+        byte[] ciphertext,
+        byte[] nonce,
+        byte[] tag,
+        byte[] ephemeralPubkey,
+        byte[]? aad = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (nonce.Length != 12)
+            throw new ArgumentException("Nonce must be 12 bytes", nameof(nonce));
+        if (tag.Length != 16)
+            throw new ArgumentException("Tag must be 16 bytes", nameof(tag));
+        if (ephemeralPubkey.Length != 33)
+            throw new ArgumentException("Ephemeral public key must be 33 bytes", nameof(ephemeralPubkey));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["ciphertext"] = ciphertext,
+            ["nonce"] = nonce,
+            ["tag"] = tag,
+            ["ephemeral_pubkey"] = ephemeralPubkey
+        };
+
+        if (aad != null)
+            parameters["aad"] = aad;
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_decrypt", parameters, cancellationToken: cancellationToken);
+        return result.TryGetValue("plaintext", out var pt) && pt is byte[] ptBytes ? ptBytes : Array.Empty<byte>();
+    }
+
+    /// <summary>
+    /// Lock/deactivate HSM mode.
+    /// </summary>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if successfully locked.</returns>
+    public async Task<bool> HsmLockAsync(CancellationToken cancellationToken = default)
+    {
+        return await CallAsync<bool>("hsm_lock", cancellationToken: cancellationToken);
+    }
+
+    private static HsmInfo ParseHsmInfo(Dictionary<string, object?> result)
+    {
+        var info = new HsmInfo
+        {
+            Active = result.TryGetValue("active", out var active) && active is bool a && a
+        };
+
+        if (info.Active)
+        {
+            if (result.TryGetValue("networks", out var networks) && networks is List<object> netList)
+            {
+                info.Networks = netList.Select(n => n?.ToString() ?? "").ToArray();
+            }
+
+            info.MainnetRootPath = result.TryGetValue("mainnet_root_path", out var mp) ? mp?.ToString() : null;
+            info.TestnetRootPath = result.TryGetValue("testnet_root_path", out var tp) ? tp?.ToString() : null;
+
+            if (result.TryGetValue("mainnet_root_pubkey", out var mpk) && mpk is byte[] mainnetPk)
+                info.MainnetRootPubkey = mainnetPk;
+            if (result.TryGetValue("testnet_root_pubkey", out var tpk) && tpk is byte[] testnetPk)
+                info.TestnetRootPubkey = testnetPk;
+
+            if (result.TryGetValue("operations_count", out var ops) && ops != null)
+                info.OperationsCount = Convert.ToUInt64(ops);
+
+            if (result.TryGetValue("auto_lock_timeout", out var timeout) && timeout != null)
+                info.AutoLockTimeout = Convert.ToUInt32(timeout);
+
+            if (result.TryGetValue("auto_lock_remaining", out var remaining) && remaining != null)
+                info.AutoLockRemaining = Convert.ToUInt32(remaining);
+        }
+
+        return info;
+    }
+
+    #endregion
+
     /// <summary>
     /// Extract the endpoint path from a full URL.
     /// </summary>

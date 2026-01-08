@@ -24,6 +24,7 @@
 #include "../utils/util.h"
 #include "../utils/wally_ext.h"
 #include "../wallet.h"
+#include "../hsm.h"
 #ifdef CONFIG_IDF_TARGET_ESP32S3
 #include "usbhmsc/usbhmsc.h"
 #include "usbhmsc/usbmode.h"
@@ -159,6 +160,16 @@ void ota_process(void* process_ptr);
 void ota_delta_process(void* process_ptr);
 void update_pinserver_process(void* process_ptr);
 void auth_user_process(void* process_ptr);
+
+// HSM mode process functions
+void hsm_get_info_process(void* process_ptr);
+void hsm_get_pubkey_process(void* process_ptr);
+void hsm_get_xpub_process(void* process_ptr);
+void hsm_sign_process(void* process_ptr);
+void hsm_ecdh_process(void* process_ptr);
+void hsm_encrypt_process(void* process_ptr);
+void hsm_decrypt_process(void* process_ptr);
+void hsm_lock_process(void* process_ptr);
 
 // Home screen
 gui_activity_t* make_home_screen_activity(const char* device_name, const char* firmware_version,
@@ -597,6 +608,22 @@ static void dispatch_message(jade_process_t* process)
             task_function = get_bip85_pubkey_process;
         } else if (IS_METHOD("sign_bip85_digests")) {
             task_function = sign_bip85_digests_process;
+        } else if (IS_METHOD("hsm_get_info")) {
+            task_function = hsm_get_info_process;
+        } else if (IS_METHOD("hsm_get_pubkey")) {
+            task_function = hsm_get_pubkey_process;
+        } else if (IS_METHOD("hsm_get_xpub")) {
+            task_function = hsm_get_xpub_process;
+        } else if (IS_METHOD("hsm_sign")) {
+            task_function = hsm_sign_process;
+        } else if (IS_METHOD("hsm_ecdh")) {
+            task_function = hsm_ecdh_process;
+        } else if (IS_METHOD("hsm_encrypt")) {
+            task_function = hsm_encrypt_process;
+        } else if (IS_METHOD("hsm_decrypt")) {
+            task_function = hsm_decrypt_process;
+        } else if (IS_METHOD("hsm_lock")) {
+            task_function = hsm_lock_process;
         } else if (IS_METHOD("ota_data") || IS_METHOD("ota_complete") || IS_METHOD("tx_input")
             || IS_METHOD("get_extended_data") || IS_METHOD("get_signature") || IS_METHOD("pin")) {
             // Method we only expect as part of a multi-message protocol
@@ -2438,6 +2465,30 @@ static void handle_session(void)
             case BTN_SESSION_SLEEP:
                 // Shutdown Jade
                 power_shutdown();
+                return;
+
+            case BTN_SESSION_HSM:
+                // Activate HSM mode
+                if (keychain_get() && keychain_get()->seed_len > 0) {
+                    if (hsm_is_active()) {
+                        // Already active - show status message
+                        const char* message[] = { "HSM Mode", "already active" };
+                        await_message_activity(message, 2);
+                    } else {
+                        // Activate HSM mode with current seed
+                        if (hsm_activate(keychain_get()->seed, keychain_get()->seed_len,
+                                        (uint8_t)keychain_get_userdata())) {
+                            const char* message[] = { "HSM Mode", "activated" };
+                            await_message_activity(message, 2);
+                        } else {
+                            const char* message[] = { "HSM activation", "failed" };
+                            await_error_activity(message, 2);
+                        }
+                    }
+                } else {
+                    const char* message[] = { "No seed available", "Cannot activate HSM" };
+                    await_error_activity(message, 2);
+                }
                 return;
 
             case BTN_SESSION_EXIT:
