@@ -792,8 +792,10 @@ All phases have been implemented and tested successfully.
 |-----------|------|--------|
 | HSM Core Module | `main/hsm.h`, `main/hsm.c` | Complete |
 | RPC Handlers | `main/process/hsm_process.c` | Complete |
-| Dashboard Integration | `main/ui/dashboard.c` | Complete |
+| Dashboard Integration | `main/process/dashboard.c` | Complete |
+| UI Session Menu | `main/ui/dashboard.c` | Complete |
 | Button Events | `main/button_events.h` | Complete |
+| Startup Screen HSM Option | `main/process/dashboard.c` | Complete |
 
 ### C# Client Implementation
 
@@ -914,3 +916,4 @@ bip32_key_to_base58(&key, BIP32_FLAG_KEY_PUBLIC, xpub_out);
 | 0.3 | 2026-01-08 | Draft | Removed `hsm_set_timeout` RPC - timeout must be configured via device UI only for security |
 | 1.0 | 2026-01-08 | Release | Implementation complete - all RPC methods implemented and tested |
 | 1.1 | 2026-01-08 | Security | Added seed isolation: keychain cleared after HSM activation to ensure wallet seed is not accessible in HSM mode |
+| 1.2 | 2026-01-08 | UI | Added "Unlock HSM" option directly on startup screen as per design document |
