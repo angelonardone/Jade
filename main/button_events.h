@@ -105,7 +105,6 @@ typedef enum {
     BTN_SESSION_HSM,
     BTN_SESSION_EXIT,
 
-    BTN_UNLOCK_HSM,
     BTN_HSM_EXIT,
 
     BTN_CONNECT_TO_BACK,

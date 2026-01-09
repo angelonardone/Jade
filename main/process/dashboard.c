@@ -57,7 +57,6 @@ static jade_msg_source_t initialisation_source = SOURCE_NONE;
 static jade_msg_source_t internal_relogin_source = SOURCE_NONE;
 static bool tolerate_usb_disconnection = false;
 static bool show_connect_screen = false;
-static bool hsm_unlock_requested = false;  // Track if user selected "Unlock HSM" vs "Unlock Wallet"
 
 // The dynamic home screen menu
 #define HOME_SCREEN_TYPE_UNINIT 0
@@ -78,14 +77,10 @@ typedef struct {
 } home_menu_item_t;
 
 // Menus for the HOME_SCREEN_TYPE_XXX values above
-// Locked state always has 3 entries (Unlock Wallet, Unlock HSM, Options)
-// Other states depend on CONFIG_HAS_CAMERA
 #ifdef CONFIG_HAS_CAMERA
 #define NUM_HOME_SCREEN_MENU_ENTRIES 3
 #else
-#define NUM_HOME_SCREEN_MENU_ENTRIES_BASE 2
-#define NUM_HOME_SCREEN_MENU_ENTRIES_LOCKED 3
-#define NUM_HOME_SCREEN_MENU_ENTRIES 3  // Use max size for array
+#define NUM_HOME_SCREEN_MENU_ENTRIES 2
 #endif
 
 static const home_menu_item_t home_menu_items[HOME_SCREEN_TYPE_NUM_STATES][NUM_HOME_SCREEN_MENU_ENTRIES] = {
@@ -94,15 +89,13 @@ static const home_menu_item_t home_menu_items[HOME_SCREEN_TYPE_NUM_STATES][NUM_H
 #ifdef CONFIG_HAS_CAMERA
         { .symbol = "2", .text = "Scan SeedQR", .btn_id = BTN_SCAN_SEEDQR },
 #endif
-        { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS }
-#ifndef CONFIG_HAS_CAMERA
-        , { .symbol = NULL, .text = NULL, .btn_id = 0 }  // Padding for fixed array size
-#endif
-    },
+        { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS } },
 
-    // Initialised/Locked - Always 3 items: Unlock Wallet, Unlock HSM, Options
-    { { .symbol = "1", .text = "Unlock Wallet", .btn_id = BTN_CONNECT },
-        { .symbol = "2", .text = "Unlock HSM", .btn_id = BTN_UNLOCK_HSM },
+    // Initialised/Locked
+    { { .symbol = "5", .text = "Unlock Jade", .btn_id = BTN_CONNECT },
+#ifdef CONFIG_HAS_CAMERA
+        { .symbol = "2", .text = "QR Mode", .btn_id = BTN_QR_MODE },
+#endif
         { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS } },
 
     // Active/Unlocked/Ready
@@ -110,11 +103,7 @@ static const home_menu_item_t home_menu_items[HOME_SCREEN_TYPE_NUM_STATES][NUM_H
 #ifdef CONFIG_HAS_CAMERA
         { .symbol = "2", .text = "Scan QR", .btn_id = BTN_SCAN_QR },
 #endif
-        { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS }
-#ifndef CONFIG_HAS_CAMERA
-        , { .symbol = NULL, .text = NULL, .btn_id = 0 }  // Padding for fixed array size
-#endif
-    }
+        { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS } }
 };
 
 // The device name and running firmware info, loaded at startup
@@ -686,21 +675,6 @@ static void dispatch_message(jade_process_t* process)
                 // else bad-pin (no wallet loaded) but still have tries remaining.
                 // Retain re-login data until successful login or ultimate failure
                 // when encrypted pin-protected wallet is wiped completely.
-            }
-
-            // If HSM unlock was requested and auth succeeded, activate HSM mode
-            if (hsm_unlock_requested && keychain_get() && keychain_get()->seed_len > 0) {
-                if (hsm_activate(keychain_get()->seed, keychain_get()->seed_len,
-                                (uint8_t)keychain_get_userdata())) {
-                    // CRITICAL: Clear the keychain to wipe the seed from memory
-                    keychain_clear();
-                    const char* message[] = { "HSM Mode", "activated" };
-                    await_message_activity(message, 2);
-                } else {
-                    const char* message[] = { "HSM activation", "failed" };
-                    await_error_activity(message, 2);
-                }
-                hsm_unlock_requested = false;
             }
         }
     }
@@ -2613,15 +2587,8 @@ static void handle_btn(const int32_t btn)
         handle_scan_qr();
         break;
 
-    // The 'connect' screen (wallet unlock)
+    // The 'connect' screen
     case BTN_CONNECT:
-        hsm_unlock_requested = false;
-        show_connect_screen = true;
-        break;
-
-    // HSM unlock - same as connect but will activate HSM mode after auth
-    case BTN_UNLOCK_HSM:
-        hsm_unlock_requested = true;
         show_connect_screen = true;
         break;
 
