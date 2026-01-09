@@ -114,27 +114,31 @@ struct hsm_keychain_t {
 
 ## User Interface
 
-### Startup Screen
+### Accessing HSM Mode
+
+HSM Mode is accessed through the **Session menu** after unlocking the wallet:
+
+1. Unlock the wallet (enter PIN)
+2. Navigate to **Session** menu
+3. Select **HSM Mode**
 
 ```
 ┌─────────────────────────────────┐
-│                                 │
-│            [Jade Logo]          │
+│  SESSION                        │
+│  ─────────────────────────────  │
 │                                 │
 │   ┌─────────────────────────┐   │
-│   │    Unlock Wallet    [>] │   │
+│   │    Log Out          [>] │   │
 │   └─────────────────────────┘   │
 │                                 │
 │   ┌─────────────────────────┐   │
-│   │    Unlock HSM       [>] │   │
-│   └─────────────────────────┘   │
-│                                 │
-│   ┌─────────────────────────┐   │
-│   │    Options          [>] │   │
+│   │    HSM Mode         [>] │   │
 │   └─────────────────────────┘   │
 │                                 │
 └─────────────────────────────────┘
 ```
+
+When HSM Mode is activated, the wallet seed is wiped from memory and only HSM keys remain accessible.
 
 ### HSM Mode Active Screen
 
@@ -914,3 +918,4 @@ bip32_key_to_base58(&key, BIP32_FLAG_KEY_PUBLIC, xpub_out);
 | 0.3 | 2026-01-08 | Draft | Removed `hsm_set_timeout` RPC - timeout must be configured via device UI only for security |
 | 1.0 | 2026-01-08 | Release | Implementation complete - all RPC methods implemented and tested |
 | 1.1 | 2026-01-08 | Security | Added seed isolation: keychain cleared after HSM activation to ensure wallet seed is not accessible in HSM mode |
+| 1.2 | 2026-01-09 | UI | HSM Mode accessed via Session menu after wallet unlock (removed startup screen option) |
