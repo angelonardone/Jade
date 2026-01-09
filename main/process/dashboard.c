@@ -62,7 +62,8 @@ static bool show_connect_screen = false;
 #define HOME_SCREEN_TYPE_UNINIT 0
 #define HOME_SCREEN_TYPE_LOCKED 1
 #define HOME_SCREEN_TYPE_ACTIVE 2
-#define HOME_SCREEN_TYPE_NUM_STATES 3
+#define HOME_SCREEN_TYPE_HSM 3
+#define HOME_SCREEN_TYPE_NUM_STATES 4
 
 static uint8_t home_screen_type = 0;
 static uint8_t home_screen_menu_item = 0;
@@ -103,7 +104,14 @@ static const home_menu_item_t home_menu_items[HOME_SCREEN_TYPE_NUM_STATES][NUM_H
 #ifdef CONFIG_HAS_CAMERA
         { .symbol = "2", .text = "Scan QR", .btn_id = BTN_SCAN_QR },
 #endif
-        { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS } }
+        { .symbol = "3", .text = "Options", .btn_id = BTN_SETTINGS } },
+
+    // HSM Mode Active (only HSM Status, padding for fixed array size)
+    { { .symbol = "H", .text = "HSM Status", .btn_id = BTN_SESSION_HSM },
+#ifdef CONFIG_HAS_CAMERA
+        { .symbol = "", .text = "", .btn_id = GUI_BUTTON_EVENT_NONE },
+#endif
+        { .symbol = "", .text = "", .btn_id = GUI_BUTTON_EVENT_NONE } }
 };
 
 // The device name and running firmware info, loaded at startup
@@ -234,6 +242,8 @@ bool show_descriptor_activity(const char* descriptor_name, const descriptor_data
     size_t wallet_fingerprint_len, bool initial_confirmation, bool overwriting, bool is_valid);
 
 gui_activity_t* make_session_activity(void);
+gui_activity_t* make_hsm_status_activity(gui_view_node_t** ops_count_text, gui_view_node_t** timeout_text);
+gui_activity_t* make_hsm_settings_activity(gui_view_node_t** timeout_item);
 gui_activity_t* make_ble_activity(gui_view_node_t** ble_status_item);
 
 // Wallet initialisation functions
@@ -324,6 +334,11 @@ static void update_home_screen(gui_view_node_t* status_light, gui_view_node_t* s
         map_string(fphex, toupper);
         gui_update_text(label, fphex);
         JADE_WALLY_VERIFY(wally_free_string(fphex));
+    } else if (home_screen_type == HOME_SCREEN_TYPE_HSM) {
+        gui_set_color(status_light, TFT_RED);
+        gui_update_text(status_light, "H"); // H for HSM
+        gui_update_text(status_text, "HSM Mode");
+        gui_update_text(label, "Crypto Operations Only");
     } else if (home_screen_type == HOME_SCREEN_TYPE_LOCKED) {
         gui_set_color(status_light, TFT_LIGHTGREY);
         gui_update_text(status_light, "J"); // Filled circle
@@ -560,10 +575,15 @@ static void dispatch_message(jade_process_t* process)
         const bool hsm_method = IS_METHOD("hsm_get_info") || IS_METHOD("hsm_get_pubkey")
             || IS_METHOD("hsm_get_xpub") || IS_METHOD("hsm_sign") || IS_METHOD("hsm_ecdh")
             || IS_METHOD("hsm_encrypt") || IS_METHOD("hsm_decrypt") || IS_METHOD("hsm_lock");
-        const bool hsm_allowed = hsm_method && hsm_is_active();
+        const bool hsm_active = hsm_is_active();
+        const bool hsm_allowed = hsm_method && hsm_active;
+
+        JADE_LOGI("dispatch_message: hsm_method=%d, hsm_active=%d, hsm_allowed=%d, keychain=%p",
+                  hsm_method, hsm_active, hsm_allowed, keychain_get());
 
         if (!KEYCHAIN_UNLOCKED_BY_MESSAGE_SOURCE(process) && !hsm_allowed) {
             // Reject the message as hw locked
+            JADE_LOGW("Rejecting message - hw locked. keychain=%p, hsm_allowed=%d", keychain_get(), hsm_allowed);
             jade_process_reject_message(
                 process, CBOR_RPC_HW_LOCKED, "Cannot process message - hardware locked or uninitialized");
         } else if (IS_METHOD("register_otp")) {
@@ -2453,6 +2473,190 @@ void offer_startup_options(void)
     handle_settings(is_startup_menu);
 }
 
+// Update HSM status text fields
+static void update_hsm_status_text(gui_view_node_t* ops_text, gui_view_node_t* timeout_text)
+{
+    JADE_ASSERT(ops_text);
+    JADE_ASSERT(timeout_text);
+
+    char txt[32];
+
+    // Update operations count
+    const uint64_t ops = hsm_get_ops_count();
+    const int ret = snprintf(txt, sizeof(txt), "Operations: %llu", (unsigned long long)ops);
+    JADE_ASSERT(ret > 0 && ret < sizeof(txt));
+    gui_update_text(ops_text, txt);
+
+    // Update timeout display
+    const uint32_t timeout = hsm_get_timeout();
+    if (timeout == 0) {
+        gui_update_text(timeout_text, "Auto-lock: Disabled");
+    } else if (timeout == 60) {
+        gui_update_text(timeout_text, "Auto-lock: 1 minute");
+    } else if (timeout % 60 == 0) {
+        const int ret2 = snprintf(txt, sizeof(txt), "Auto-lock: %lu min", (unsigned long)(timeout / 60));
+        JADE_ASSERT(ret2 > 0 && ret2 < sizeof(txt));
+        gui_update_text(timeout_text, txt);
+    } else {
+        const int ret2 = snprintf(txt, sizeof(txt), "Auto-lock: %lu sec", (unsigned long)timeout);
+        JADE_ASSERT(ret2 > 0 && ret2 < sizeof(txt));
+        gui_update_text(timeout_text, txt);
+    }
+}
+
+// Update HSM timeout setting text
+static void update_hsm_timeout_setting_text(gui_view_node_t* timeout_item, uint32_t timeout)
+{
+    JADE_ASSERT(timeout_item);
+    char txt[24];
+
+    if (timeout == 0) {
+        gui_update_text(timeout_item, "Timeout: Disabled");
+    } else if (timeout == 60) {
+        gui_update_text(timeout_item, "Timeout: 1 minute");
+    } else if (timeout == 3600) {
+        gui_update_text(timeout_item, "Timeout: 1 hour");
+    } else if (timeout % 60 == 0) {
+        const int ret = snprintf(txt, sizeof(txt), "Timeout: %lu minutes", (unsigned long)(timeout / 60));
+        JADE_ASSERT(ret > 0 && ret < sizeof(txt));
+        gui_update_text(timeout_item, txt);
+    } else {
+        const int ret = snprintf(txt, sizeof(txt), "Timeout: %lu seconds", (unsigned long)timeout);
+        JADE_ASSERT(ret > 0 && ret < sizeof(txt));
+        gui_update_text(timeout_item, txt);
+    }
+}
+
+// Handle HSM auto-lock timeout setting
+static void handle_hsm_timeout_setting(void)
+{
+    // Timeout values: 0=disabled, 5min, 15min, 30min, 1hr
+    static const uint32_t VALUES[] = { 0, 300, 900, 1800, 3600 };
+    static const uint32_t num_values = sizeof(VALUES) / sizeof(VALUES[0]);
+
+    // Get current timeout
+    const uint32_t initial_timeout = hsm_get_timeout();
+    uint32_t new_timeout = initial_timeout;
+
+    // Find the position in the list of allowed values
+    uint8_t pos = 0;
+    for (uint8_t i = 0; i < num_values; ++i) {
+        if (VALUES[i] == new_timeout) {
+            pos = i;
+            break;
+        }
+    }
+
+    gui_view_node_t* item_text = NULL;
+    gui_activity_t* const act = make_carousel_activity("HSM Auto-lock", NULL, &item_text);
+    JADE_ASSERT(item_text);
+    update_hsm_timeout_setting_text(item_text, new_timeout);
+    gui_set_current_activity(act);
+
+    int32_t ev_id;
+    bool done = false;
+    while (!done) {
+        gui_activity_wait_event(act, GUI_EVENT, ESP_EVENT_ANY_ID, NULL, &ev_id, NULL, 0);
+
+        switch (ev_id) {
+        case GUI_WHEEL_LEFT_EVENT:
+            pos = (pos + num_values - 1) % num_values;
+            new_timeout = VALUES[pos];
+            update_hsm_timeout_setting_text(item_text, new_timeout);
+            break;
+
+        case GUI_WHEEL_RIGHT_EVENT:
+            pos = (pos + 1) % num_values;
+            new_timeout = VALUES[pos];
+            update_hsm_timeout_setting_text(item_text, new_timeout);
+            break;
+
+        default:
+            done = (ev_id == gui_get_click_event());
+        }
+    }
+
+    // Apply updated timeout
+    if (new_timeout != initial_timeout) {
+        hsm_set_timeout(new_timeout);
+    }
+}
+
+// Handle HSM settings menu
+static void handle_hsm_settings(void)
+{
+    gui_view_node_t* timeout_item = NULL;
+    gui_activity_t* act = make_hsm_settings_activity(&timeout_item);
+    JADE_ASSERT(timeout_item);
+
+    // Update timeout display
+    update_hsm_timeout_setting_text(timeout_item, hsm_get_timeout());
+
+    int32_t ev_id;
+    while (true) {
+        gui_set_current_activity(act);
+        if (gui_activity_wait_event(act, GUI_BUTTON_EVENT, ESP_EVENT_ANY_ID, NULL, &ev_id, NULL, 0)) {
+            switch (ev_id) {
+            case BTN_HSM_SETTINGS_TIMEOUT:
+                handle_hsm_timeout_setting();
+                // Refresh the settings screen
+                act = make_hsm_settings_activity(&timeout_item);
+                update_hsm_timeout_setting_text(timeout_item, hsm_get_timeout());
+                break;
+
+            case BTN_HSM_SETTINGS_EXIT:
+                return;
+
+            default:
+                break;
+            }
+        }
+    }
+}
+
+// Handle HSM active status screen
+static void handle_hsm_active(void)
+{
+    gui_view_node_t* ops_text = NULL;
+    gui_view_node_t* timeout_text = NULL;
+    gui_activity_t* act = make_hsm_status_activity(&ops_text, &timeout_text);
+    JADE_ASSERT(ops_text);
+    JADE_ASSERT(timeout_text);
+
+    // Update status display
+    update_hsm_status_text(ops_text, timeout_text);
+
+    int32_t ev_id;
+    while (true) {
+        gui_set_current_activity(act);
+        if (gui_activity_wait_event(act, GUI_BUTTON_EVENT, ESP_EVENT_ANY_ID, NULL, &ev_id, NULL, 0)) {
+            switch (ev_id) {
+            case BTN_HSM_LOCK:
+                // Lock HSM and exit
+                hsm_deactivate();
+                {
+                    const char* message[] = { "HSM Mode", "locked" };
+                    await_message_activity(message, 2);
+                }
+                return;
+
+            case BTN_HSM_SETTINGS:
+                handle_hsm_settings();
+                // Refresh the status screen after settings
+                act = make_hsm_status_activity(&ops_text, &timeout_text);
+                update_hsm_status_text(ops_text, timeout_text);
+                break;
+
+            case BTN_HSM_EXIT:
+                return;
+
+            default:
+                break;
+            }
+        }
+    }
+}
+
 // Session logout or sleep/power-off
 static void handle_session(void)
 {
@@ -2475,20 +2679,24 @@ static void handle_session(void)
 
             case BTN_SESSION_HSM:
                 // Activate HSM mode
+                JADE_LOGI("BTN_SESSION_HSM: keychain=%p, hsm_is_active=%d", keychain_get(), hsm_is_active());
                 if (keychain_get() && keychain_get()->seed_len > 0) {
                     if (hsm_is_active()) {
-                        // Already active - show status message
-                        const char* message[] = { "HSM Mode", "already active" };
-                        await_message_activity(message, 2);
+                        // Already active - show HSM status screen
+                        JADE_LOGI("HSM already active, showing status screen");
+                        handle_hsm_active();
                     } else {
                         // Activate HSM mode with current seed
+                        JADE_LOGI("Activating HSM mode with userdata=%d", (uint8_t)keychain_get_userdata());
                         if (hsm_activate(keychain_get()->seed, keychain_get()->seed_len,
                                         (uint8_t)keychain_get_userdata())) {
                             // CRITICAL: Clear the keychain to wipe the seed from memory
                             // This ensures the master seed is not accessible in HSM mode
                             keychain_clear();
-                            const char* message[] = { "HSM Mode", "activated" };
-                            await_message_activity(message, 2);
+                            JADE_LOGI("HSM activated, keychain cleared, hsm_is_active=%d", hsm_is_active());
+                            // Show HSM status screen
+                            handle_hsm_active();
+                            JADE_LOGI("Returned from HSM status screen, hsm_is_active=%d", hsm_is_active());
                         } else {
                             const char* message[] = { "HSM activation", "failed" };
                             await_error_activity(message, 2);
@@ -2600,6 +2808,13 @@ static void handle_btn(const int32_t btn)
         await_qr_help_activity("blkstrm.com/jadewallets");
         break;
 
+    // HSM Status from home screen (when HSM mode is active)
+    case BTN_SESSION_HSM:
+        if (hsm_is_active()) {
+            handle_hsm_active();
+        }
+        break;
+
     default:
         break;
     }
@@ -2643,10 +2858,11 @@ static void do_dashboard(jade_process_t* process, const keychain_t* const initia
     const uint8_t initial_userdata = keychain_get_userdata();
     const jade_msg_source_t initial_connection_selection = initialisation_source;
     const bool initial_show_connect_screen = show_connect_screen;
+    const bool initial_hsm_active = hsm_is_active();
 
     while (keychain_get() == initial_keychain && keychain_has_pin() == initial_has_pin
         && keychain_get_userdata() == initial_userdata && initial_show_connect_screen == show_connect_screen
-        && initialisation_source == initial_connection_selection) {
+        && initialisation_source == initial_connection_selection && hsm_is_active() == initial_hsm_active) {
         // If the last loop did something, ensure the current dashboard screen
         // is displayed. (Doing this too eagerly can either cause unnecessary
         // screen flicker or can cause the dashboard to overwrite other screens
@@ -2715,6 +2931,15 @@ static void do_dashboard(jade_process_t* process, const keychain_t* const initia
 
             // Set activity flag back to idle
             main_thread_action = MAIN_THREAD_ACTIVITY_NONE;
+        }
+
+        // Check HSM auto-lock timeout
+        // If HSM times out, it will be deactivated and we need to refresh the dashboard
+        if (hsm_check_timeout()) {
+            JADE_LOGI("HSM auto-lock timeout - returning to refresh dashboard");
+            const char* message[] = { "HSM Mode", "timed out" };
+            await_message_activity(message, 2);
+            break;  // Exit loop to refresh dashboard state
         }
 
         // Ensure to clear any decrypted keychain if in-use ble- or usb- connection lost.
@@ -2832,6 +3057,9 @@ void dashboard_process(void* process_ptr)
                 JADE_ASSERT(keychain_get_userdata() != SOURCE_NONE);
                 JADE_LOGI("Connected and have wallet/keys - showing home screen/Active");
                 UPDATE_HOME_SCREEN(HOME_SCREEN_TYPE_ACTIVE);
+            } else if (hsm_is_active()) {
+                JADE_LOGI("HSM mode active - showing home screen/HSM");
+                UPDATE_HOME_SCREEN(HOME_SCREEN_TYPE_HSM);
             } else if (has_pin) {
                 JADE_LOGI("Wallet/keys pin set but not yet loaded - showing home screen/Initialised");
                 UPDATE_HOME_SCREEN(HOME_SCREEN_TYPE_LOCKED);

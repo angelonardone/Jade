@@ -140,24 +140,50 @@ HSM Mode is accessed through the **Session menu** after unlocking the wallet:
 
 When HSM Mode is activated, the wallet seed is wiped from memory and only HSM keys remain accessible.
 
-### HSM Mode Active Screen
+### HSM Mode Home Screen
+
+When HSM mode is active, the home screen displays a distinct HSM state:
 
 ```
 ┌─────────────────────────────────┐
-│  HSM MODE                       │
+│   ┌───┐                         │
+│   │ H │  HSM Mode               │
+│   └───┘  Crypto Operations Only │
+│  (red)                          │
+│                                 │
+│   ┌─────────────────────────┐   │
+│   │ H   HSM Status          │   │
+│   └─────────────────────────┘   │
+│                                 │
+└─────────────────────────────────┘
+```
+
+The red "H" indicator and "HSM Mode" status clearly distinguish this from the normal wallet "Active" state.
+
+### HSM Mode Status Screen
+
+Accessed via "HSM Status" on the home screen:
+
+```
+┌─────────────────────────────────┐
+│  HSM MODE                    [=]│
 │  ─────────────────────────────  │
 │                                 │
-│  Status: Active                 │
-│  Networks: Mainnet + Testnet    │
 │  Operations: 0                  │
 │  Auto-lock: Disabled            │
 │                                 │
-│  Mainnet: m/86'/0'/0'/8128'/*   │
-│  Testnet: m/86'/1'/0'/8128'/*   │
+│  ┌─────────────────────────┐    │
+│  │ Lock                    │    │
+│  └─────────────────────────┘    │
+│  ┌─────────────────────────┐    │
+│  │ Settings                │    │
+│  └─────────────────────────┘    │
 │                                 │
-│  [Lock]              [Settings] │
 └─────────────────────────────────┘
 ```
+
+- **Lock**: Exits HSM mode and clears keys from memory
+- **Settings**: Opens HSM settings screen
 
 ### HSM Settings Screen (Device UI Only)
 
@@ -919,3 +945,5 @@ bip32_key_to_base58(&key, BIP32_FLAG_KEY_PUBLIC, xpub_out);
 | 1.0 | 2026-01-08 | Release | Implementation complete - all RPC methods implemented and tested |
 | 1.1 | 2026-01-08 | Security | Added seed isolation: keychain cleared after HSM activation to ensure wallet seed is not accessible in HSM mode |
 | 1.2 | 2026-01-09 | UI | HSM Mode accessed via Session menu after wallet unlock (removed startup screen option) |
+| 1.3 | 2026-01-09 | UI | Added HSM home screen with red indicator; HSM Status screen with Lock/Settings buttons |
+| 1.4 | 2026-01-09 | Fix | Implemented auto-lock timeout check in dashboard loop; HsmTest loop option |

@@ -556,6 +556,45 @@ gui_activity_t* make_session_activity(void)
     return make_menu_activity("Session", hdrbtns, 2, menubtns, sizeof(menubtns) / sizeof(btn_data_t));
 }
 
+gui_activity_t* make_hsm_status_activity(gui_view_node_t** ops_count_text, gui_view_node_t** timeout_text)
+{
+    JADE_INIT_OUT_PPTR(ops_count_text);
+    JADE_INIT_OUT_PPTR(timeout_text);
+
+    btn_data_t hdrbtns[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_HSM_EXIT },
+        { .txt = NULL, .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE } };
+
+    // Create status text nodes for the menu items
+    gui_make_text(ops_count_text, "Operations: 0", TFT_WHITE);
+    gui_set_align(*ops_count_text, GUI_ALIGN_CENTER, GUI_ALIGN_MIDDLE);
+
+    gui_make_text(timeout_text, "Auto-lock: Disabled", TFT_WHITE);
+    gui_set_align(*timeout_text, GUI_ALIGN_CENTER, GUI_ALIGN_MIDDLE);
+
+    btn_data_t menubtns[] = { { .content = *ops_count_text, .ev_id = GUI_BUTTON_EVENT_NONE },
+        { .content = *timeout_text, .ev_id = GUI_BUTTON_EVENT_NONE },
+        { .txt = "Lock", .font = GUI_DEFAULT_FONT, .ev_id = BTN_HSM_LOCK },
+        { .txt = "Settings", .font = GUI_DEFAULT_FONT, .ev_id = BTN_HSM_SETTINGS } };
+
+    return make_menu_activity("HSM Mode", hdrbtns, 2, menubtns, 4);
+}
+
+gui_activity_t* make_hsm_settings_activity(gui_view_node_t** timeout_item)
+{
+    JADE_INIT_OUT_PPTR(timeout_item);
+
+    btn_data_t hdrbtns[] = { { .txt = "=", .font = JADE_SYMBOLS_16x16_FONT, .ev_id = BTN_HSM_SETTINGS_EXIT },
+        { .txt = NULL, .font = GUI_DEFAULT_FONT, .ev_id = GUI_BUTTON_EVENT_NONE } };
+
+    // Create timeout text node for menu item
+    gui_make_text(timeout_item, "Timeout: Disabled", TFT_WHITE);
+    gui_set_align(*timeout_item, GUI_ALIGN_CENTER, GUI_ALIGN_MIDDLE);
+
+    btn_data_t menubtns[] = { { .content = *timeout_item, .ev_id = BTN_HSM_SETTINGS_TIMEOUT } };
+
+    return make_menu_activity("HSM Settings", hdrbtns, 2, menubtns, 1);
+}
+
 gui_activity_t* make_ble_activity(gui_view_node_t** ble_status_item)
 {
     JADE_INIT_OUT_PPTR(ble_status_item);
