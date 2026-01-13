@@ -6,6 +6,17 @@
     <Nullable>enable</Nullable>
     <RootNamespace>HSMbridge</RootNamespace>
     <AssemblyName>HSMbridge</AssemblyName>
+
+    <!-- Publishing options for self-contained executables -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+
+    <!-- Product info -->
+    <Product>HSMbridge</Product>
+    <Description>REST API bridge for Jade HSM functionality</Description>
+    <Copyright>Copyright (c) 2025</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

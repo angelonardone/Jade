@@ -23,20 +23,59 @@ HSMbridge is a REST API server that exposes Jade HSM functionality over HTTP. It
 
 ## Requirements
 
-- .NET 8.0 SDK
 - Jade hardware device with firmware supporting HSM mode
 - USB connection to the Jade device
+- For development: .NET 8.0 SDK
 
-## Quick Start
+## Installation
 
-### 1. Build
+### Option 1: Pre-built Executables (Recommended)
+
+Download the pre-built executable for your platform from the [Releases](../../releases) page:
+
+| Platform | File |
+|----------|------|
+| Windows (64-bit) | `HSMbridge-x.x.x-windows-x64.zip` |
+| Windows ARM64 | `HSMbridge-x.x.x-windows-arm64.zip` |
+| macOS Intel | `HSMbridge-x.x.x-macos-x64.zip` |
+| macOS Apple Silicon | `HSMbridge-x.x.x-macos-arm64.zip` |
+| Linux (64-bit) | `HSMbridge-x.x.x-linux-x64.zip` |
+| Linux ARM64 | `HSMbridge-x.x.x-linux-arm64.zip` |
+
+Extract and run:
+```bash
+# macOS/Linux
+./HSMbridge
+
+# Windows
+HSMbridge.exe
+```
+
+No .NET installation required - the executable is self-contained.
+
+### Option 2: Build from Source
+
+Requires .NET 8.0 SDK.
 
 ```bash
 cd jade-csharp-client/HSMbridge
 dotnet build
+dotnet run
 ```
 
-### 2. Configure (Optional)
+### Building Release Executables
+
+To create self-contained executables for all platforms:
+
+```bash
+./build-release.sh 1.0.0
+```
+
+This creates zip archives in `releases/` for Windows, macOS, and Linux.
+
+## Quick Start
+
+### 1. Configure (Optional)
 
 Edit `appsettings.json` to customize settings:
 
@@ -66,13 +105,13 @@ Edit `appsettings.json` to customize settings:
 | `EnableSwagger` | Enable Swagger UI at /swagger | true |
 | `HsmActivationTimeoutSeconds` | Timeout waiting for HSM mode activation | 120 |
 
-### 3. Run
+### 2. Run
 
 ```bash
 dotnet run
 ```
 
-### 4. Startup Flow
+### 3. Startup Flow
 
 When HSMbridge starts, it will:
 
@@ -85,7 +124,7 @@ When HSMbridge starts, it will:
    - Confirm activation
 4. **Start REST API** - Once HSM is active, starts the HTTP server
 
-### 5. Test
+### 4. Test
 
 Open Swagger UI in your browser:
 ```
