@@ -167,7 +167,7 @@ await rpc.AuthUserAsync(pinServer, "mainnet");
 
 ## HSM Mode
 
-HSM (Hardware Security Module) Mode provides isolated cryptographic operations without exposing Bitcoin wallet keys. Keys are derived from a dedicated branch (`m/86'/coin'/0'/8128'/*`) and support both mainnet and testnet simultaneously.
+HSM (Hardware Security Module) Mode provides isolated cryptographic operations without exposing Bitcoin wallet keys. Keys are derived from a dedicated branch (`m/86'/coin'/0'/6000'/*`) and support both mainnet and testnet simultaneously.
 
 ### Activating HSM Mode
 
@@ -246,8 +246,8 @@ await rpc.HsmLockAsync();
 
 | Network | Root Path | Index Path |
 |---------|-----------|------------|
-| Mainnet | `m/86'/0'/0'/8128'` | `m/86'/0'/0'/8128'/{index}` |
-| Testnet | `m/86'/1'/0'/8128'` | `m/86'/1'/0'/8128'/{index}` |
+| Mainnet | `m/86'/0'/0'/6000'` | `m/86'/0'/0'/6000'/{index}` |
+| Testnet | `m/86'/1'/0'/6000'` | `m/86'/1'/0'/6000'/{index}` |
 
 - Index is non-hardened (0 to 2^31-1)
 - Both networks are available simultaneously when HSM mode is active
@@ -273,7 +273,7 @@ public class HsmInfo
 public class HsmPubkeyResult
 {
     public byte[] Pubkey { get; set; }  // 33 bytes, compressed
-    public string Path { get; set; }     // e.g., "m/86'/0'/0'/8128'/0"
+    public string Path { get; set; }     // e.g., "m/86'/0'/0'/6000'/0"
 }
 
 // Extended public key result

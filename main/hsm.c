@@ -19,8 +19,8 @@
 static hsm_keychain_t hsm_keychain;
 
 // Path strings for display
-static const char* HSM_PATH_MAINNET = "m/86'/0'/0'/8128'";
-static const char* HSM_PATH_TESTNET = "m/86'/1'/0'/8128'";
+static const char* HSM_PATH_MAINNET = "m/86'/0'/0'/6000'";
+static const char* HSM_PATH_TESTNET = "m/86'/1'/0'/6000'";
 
 void hsm_init(void)
 {
@@ -62,7 +62,7 @@ bool hsm_activate(const uint8_t* seed, size_t seed_len, uint8_t userdata)
         return false;
     }
 
-    // Derive mainnet HSM key: m/86'/0'/0'/8128'
+    // Derive mainnet HSM key: m/86'/0'/0'/6000'
     struct ext_key mainnet_key;
     SENSITIVE_PUSH(&mainnet_key, sizeof(mainnet_key));
 
@@ -75,7 +75,7 @@ bool hsm_activate(const uint8_t* seed, size_t seed_len, uint8_t userdata)
         return false;
     }
 
-    // Derive testnet HSM key: m/86'/1'/0'/8128'
+    // Derive testnet HSM key: m/86'/1'/0'/6000'
     struct ext_key testnet_key;
     SENSITIVE_PUSH(&testnet_key, sizeof(testnet_key));
 
@@ -240,7 +240,7 @@ bool hsm_derive_key(hsm_network_t network, uint32_t index,
     memcpy(root_key.priv_key + 1, root_privkey, EC_PRIVATE_KEY_LEN);
     memcpy(root_key.chain_code, root_chaincode, 32);
     memcpy(root_key.pub_key, root_pubkey, EC_PUBLIC_KEY_LEN);
-    root_key.depth = 4;  // Already at depth 4 (m/86'/coin'/0'/8128')
+    root_key.depth = 4;  // Already at depth 4 (m/86'/coin'/0'/6000')
     root_key.version = (network == HSM_NETWORK_MAINNET) ? BIP32_VER_MAIN_PRIVATE : BIP32_VER_TEST_PRIVATE;
 
     // Derive child key (non-hardened)

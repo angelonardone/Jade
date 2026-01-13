@@ -9,12 +9,12 @@
 #include <wally_crypto.h>
 
 // HSM derivation path constants
-// Path: m/86'/coin'/0'/8128'
+// Path: m/86'/coin'/0'/6000'
 #define HSM_PATH_PURPOSE    0x80000056  // 86' (BIP-86 Taproot)
 #define HSM_PATH_COIN_MAIN  0x80000000  // 0' (Bitcoin mainnet)
 #define HSM_PATH_COIN_TEST  0x80000001  // 1' (Bitcoin testnet)
 #define HSM_PATH_ACCOUNT    0x80000000  // 0'
-#define HSM_PATH_HSM_BRANCH 0x80001FC0  // 8128' (HSM branch)
+#define HSM_PATH_HSM_BRANCH 0x80001770  // 6000' (HSM branch)
 
 // Maximum plaintext size for encryption
 #define HSM_MAX_PLAINTEXT_SIZE 1024
@@ -38,12 +38,12 @@ typedef enum {
 
 // HSM keychain structure - stores derived keys for both networks
 typedef struct {
-    // Mainnet keys: m/86'/0'/0'/8128'
+    // Mainnet keys: m/86'/0'/0'/6000'
     uint8_t mainnet_private_key[EC_PRIVATE_KEY_LEN];
     uint8_t mainnet_chain_code[32];
     uint8_t mainnet_public_key[EC_PUBLIC_KEY_LEN];
 
-    // Testnet keys: m/86'/1'/0'/8128'
+    // Testnet keys: m/86'/1'/0'/6000'
     uint8_t testnet_private_key[EC_PRIVATE_KEY_LEN];
     uint8_t testnet_chain_code[32];
     uint8_t testnet_public_key[EC_PUBLIC_KEY_LEN];

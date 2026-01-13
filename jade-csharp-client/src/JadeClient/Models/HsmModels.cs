@@ -16,12 +16,12 @@ public class HsmInfo
     public string[] Networks { get; set; } = Array.Empty<string>();
 
     /// <summary>
-    /// Mainnet root derivation path (e.g., "m/86'/0'/0'/8128'").
+    /// Mainnet root derivation path (e.g., "m/86'/0'/0'/6000'").
     /// </summary>
     public string? MainnetRootPath { get; set; }
 
     /// <summary>
-    /// Testnet root derivation path (e.g., "m/86'/1'/0'/8128'").
+    /// Testnet root derivation path (e.g., "m/86'/1'/0'/6000'").
     /// </summary>
     public string? TestnetRootPath { get; set; }
 
@@ -62,7 +62,7 @@ public class HsmPubkeyResult
     public byte[] Pubkey { get; set; } = Array.Empty<byte>();
 
     /// <summary>
-    /// Full derivation path (e.g., "m/86'/0'/0'/8128'/0").
+    /// Full derivation path (e.g., "m/86'/0'/0'/6000'/0").
     /// </summary>
     public string Path { get; set; } = string.Empty;
 }
@@ -78,7 +78,7 @@ public class HsmXpubResult
     public string Xpub { get; set; } = string.Empty;
 
     /// <summary>
-    /// Derivation path (e.g., "m/86'/0'/0'/8128'").
+    /// Derivation path (e.g., "m/86'/0'/0'/6000'").
     /// </summary>
     public string Path { get; set; } = string.Empty;
 }

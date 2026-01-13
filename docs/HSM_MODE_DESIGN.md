@@ -41,12 +41,12 @@ This document describes a proposed **HSM (Hardware Security Module) Mode** for J
                                     (Bitcoin Wallet)          (Coin Type 0)
                                                                     │
                                                                     ▼
-                                                            m/86'/0'/0'/8128'
+                                                            m/86'/0'/0'/6000'
                                                             (HSM Root Key)
                                                                     │
                             ┌───────────┬───────────┬───────────────┼────────────┐
                             ▼           ▼           ▼               ▼            ▼
-                      .../8128'/0  .../8128'/1  .../8128'/2   .../8128'/n   ...
+                      .../6000'/0  .../6000'/1  .../6000'/2   .../6000'/n   ...
                       (Index 0)   (Index 1)    (Index 2)     (Index n)
 ```
 
@@ -55,14 +55,14 @@ This document describes a proposed **HSM (Hardware Security Module) Mode** for J
 HSM mode supports **both mainnet and testnet simultaneously** using separate derivation paths:
 
 ```
-Mainnet:  m / 86' / 0' / 0' / 8128' / index
-Testnet:  m / 86' / 1' / 0' / 8128' / index
+Mainnet:  m / 86' / 0' / 0' / 6000' / index
+Testnet:  m / 86' / 1' / 0' / 6000' / index
               │     │    │     │       │
               │     │    │     │       └── Index: 0 to 2^31-1 (non-hardened for flexibility)
               │     │    │     │
-              │     │    │     └── HSM Branch: 8128' (0x80001FC0)
-              │     │    │         ASCII "HSM" = 0x48534D = decimal 4804941
-              │     │    │         Using 8128 (0x1FC0) as shorter alternative
+              │     │    │     └── HSM Branch: 6000' (0x80001770)
+              │     │    │         Dedicated HSM branch index
+              │     │    │         6000 (0x1770) chosen as a memorable value
               │     │    │
               │     │    └── Account: 0' (standard first account)
               │     │
@@ -73,7 +73,7 @@ Testnet:  m / 86' / 1' / 0' / 8128' / index
 
 **Why these choices:**
 - **86' (Taproot)**: Enables Schnorr signatures which are simpler and more efficient
-- **8128'**: Hardened branch ensures HSM keys cannot be derived from xpub
+- **6000'**: Hardened branch ensures HSM keys cannot be derived from xpub
 - **Non-hardened index**: Allows public key derivation for key management
 - **Dual network support**: Both mainnet and testnet keys available simultaneously
 
@@ -92,12 +92,12 @@ struct keychain_t {
 #### HSM Mode
 ```c
 struct hsm_keychain_t {
-    // Mainnet keys: m/86'/0'/0'/8128'
+    // Mainnet keys: m/86'/0'/0'/6000'
     uint8_t hsm_mainnet_private_key[32];
     uint8_t hsm_mainnet_chain_code[32];
     uint8_t hsm_mainnet_public_key[33];
 
-    // Testnet keys: m/86'/1'/0'/8128'
+    // Testnet keys: m/86'/1'/0'/6000'
     uint8_t hsm_testnet_private_key[32];
     uint8_t hsm_testnet_chain_code[32];
     uint8_t hsm_testnet_public_key[33];
@@ -240,9 +240,9 @@ Get HSM mode status and configuration.
     "result": {
         "active": true,
         "networks": ["mainnet", "testnet"],
-        "mainnet_root_path": "m/86'/0'/0'/8128'",
+        "mainnet_root_path": "m/86'/0'/0'/6000'",
         "mainnet_root_pubkey": "02a1b2c3...",
-        "testnet_root_path": "m/86'/1'/0'/8128'",
+        "testnet_root_path": "m/86'/1'/0'/6000'",
         "testnet_root_pubkey": "03d4e5f6...",
         "operations_count": 42,
         "auto_lock_timeout": 0,
@@ -275,7 +275,7 @@ Get public key for a specific index.
     "id": "2",
     "result": {
         "pubkey": "02abc123...",
-        "path": "m/86'/0'/0'/8128'/0"
+        "path": "m/86'/0'/0'/6000'/0"
     }
 }
 ```
@@ -309,7 +309,7 @@ Get extended public key for HSM root (allows external public key derivation).
     "id": "3",
     "result": {
         "xpub": "xpub6...",
-        "path": "m/86'/0'/0'/8128'"
+        "path": "m/86'/0'/0'/6000'"
     }
 }
 ```
@@ -591,7 +591,7 @@ Exit HSM mode and clear keys from memory.
 
 ### Security Properties
 
-1. **Key Isolation**: HSM mode cannot access paths outside `m/86'/coin'/0'/8128'/*`
+1. **Key Isolation**: HSM mode cannot access paths outside `m/86'/coin'/0'/6000'/*`
 2. **Forward Secrecy**: ECIES uses ephemeral keys for each encryption
 3. **Authenticated Encryption**: AES-256-GCM provides confidentiality and integrity
 4. **Deterministic Derivation**: Same index always produces same key (reproducible)
