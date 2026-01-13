@@ -71,7 +71,22 @@ To create self-contained executables for all platforms:
 ./build-release.sh 1.0.0
 ```
 
-This creates zip archives in `releases/` for Windows, macOS, and Linux.
+This creates zip archives in `releases/` folder:
+
+```
+jade-csharp-client/HSMbridge/releases/
+├── HSMbridge-1.0.0-windows-x64.zip
+├── HSMbridge-1.0.0-windows-arm64.zip
+├── HSMbridge-1.0.0-macos-x64.zip
+├── HSMbridge-1.0.0-macos-arm64.zip
+├── HSMbridge-1.0.0-linux-x64.zip
+└── HSMbridge-1.0.0-linux-arm64.zip
+```
+
+Each zip contains:
+- `HSMbridge` (or `HSMbridge.exe` on Windows) - self-contained executable (~45MB)
+- `appsettings.json` - configuration file
+- `README.md` - documentation
 
 ## Quick Start
 
