@@ -21,28 +21,42 @@ Console.WriteLine($"  HSM Activation Timeout: {config.HsmActivationTimeoutSecond
 
 // Find Jade device
 Console.WriteLine("Searching for Jade device...");
-var ports = SerialTransport.GetAvailablePorts();
+Console.WriteLine($"  Platform: {SerialTransport.GetCurrentPlatform()}\n");
+
 string? jadePort = config.SerialPort;
 
 if (string.IsNullOrEmpty(jadePort))
 {
-    foreach (var port in ports)
-    {
-        if (port.Contains("usbserial") || port.Contains("USB") || port.Contains("ACM"))
-        {
-            jadePort = port;
-            break;
-        }
-    }
+    // Use OS-aware port discovery
+    jadePort = SerialTransport.FindJadePort();
 }
 
 if (jadePort == null)
 {
     Console.WriteLine("ERROR: No Jade device found.");
-    Console.WriteLine("Please connect your Jade device via USB and try again.");
-    Console.WriteLine("\nAvailable ports:");
-    foreach (var port in ports)
-        Console.WriteLine($"  - {port}");
+    Console.WriteLine("Please connect your Jade device via USB and try again.\n");
+
+    var allPorts = SerialTransport.GetAvailablePorts();
+    var jadePorts = SerialTransport.DiscoverJadePorts();
+
+    if (jadePorts.Length > 0)
+    {
+        Console.WriteLine("Detected USB-serial ports:");
+        foreach (var port in jadePorts)
+            Console.WriteLine($"  - {port}");
+    }
+    else if (allPorts.Length > 0)
+    {
+        Console.WriteLine("All available ports (none matched Jade patterns):");
+        foreach (var port in allPorts)
+            Console.WriteLine($"  - {port}");
+    }
+    else
+    {
+        Console.WriteLine("No serial ports detected on this system.");
+    }
+
+    Console.WriteLine($"\n{SerialTransport.GetPortNamingHelp()}");
     Environment.Exit(1);
 }
 

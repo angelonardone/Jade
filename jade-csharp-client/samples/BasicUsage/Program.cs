@@ -8,17 +8,39 @@ Console.WriteLine("JadeClient C# Library - Device Test");
 Console.WriteLine("=====================================");
 Console.WriteLine();
 
+// Detect operating system and show platform info
+var platform = SerialTransport.GetCurrentPlatform();
+Console.WriteLine($"Platform: {platform}");
+Console.WriteLine();
+
 // List available serial ports
-var ports = SerialTransport.GetAvailablePorts();
-Console.WriteLine("Available serial ports:");
-foreach (var port in ports)
+var allPorts = SerialTransport.GetAvailablePorts();
+var jadePorts = SerialTransport.DiscoverJadePorts();
+
+Console.WriteLine("All serial ports:");
+foreach (var port in allPorts)
 {
-    Console.WriteLine($"  - {port}");
+    bool isJadeCandidate = jadePorts.Contains(port);
+    Console.WriteLine($"  - {port}{(isJadeCandidate ? " (USB-Serial)" : "")}");
 }
 Console.WriteLine();
 
-// Connect to the Jade device
-string portName = "/dev/cu.usbserial-59010065821";
+// Auto-detect or use command line argument
+string? portName = args.Length > 0 ? args[0] : SerialTransport.FindJadePort();
+
+if (portName == null)
+{
+    Console.WriteLine("ERROR: No Jade device found.");
+    Console.WriteLine();
+    Console.WriteLine(SerialTransport.GetPortNamingHelp());
+    Console.WriteLine();
+    Console.WriteLine("Usage: BasicUsage [port_name]");
+    Console.WriteLine("  Example (Windows): BasicUsage COM3");
+    Console.WriteLine("  Example (macOS):   BasicUsage /dev/cu.usbserial-XXXXX");
+    Console.WriteLine("  Example (Linux):   BasicUsage /dev/ttyUSB0");
+    return;
+}
+
 Console.WriteLine($"Connecting to Jade on {portName}...");
 
 try

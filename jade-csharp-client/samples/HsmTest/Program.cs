@@ -15,21 +15,27 @@ class Program
         Console.WriteLine("JadeClient C# Library - HSM Mode Test");
         Console.WriteLine("======================================\n");
 
-        // Find Jade device
-        var ports = SerialTransport.GetAvailablePorts();
-        string? jadePort = null;
-        foreach (var port in ports)
-        {
-            if (port.Contains("usbserial") || port.Contains("USB") || port.Contains("ACM"))
-            {
-                jadePort = port;
-                break;
-            }
-        }
+        // Detect platform and find Jade device
+        var platform = SerialTransport.GetCurrentPlatform();
+        Console.WriteLine($"Platform: {platform}\n");
+
+        // Auto-detect or use command line argument
+        string? jadePort = args.Length > 0 ? args[0] : SerialTransport.FindJadePort();
 
         if (jadePort == null)
         {
-            Console.WriteLine("No Jade device found. Please connect your Jade and try again.");
+            Console.WriteLine("No Jade device found. Please connect your Jade and try again.\n");
+
+            var jadePorts = SerialTransport.DiscoverJadePorts();
+            if (jadePorts.Length > 0)
+            {
+                Console.WriteLine("Detected USB-serial ports:");
+                foreach (var port in jadePorts)
+                    Console.WriteLine($"  - {port}");
+            }
+
+            Console.WriteLine($"\n{SerialTransport.GetPortNamingHelp()}");
+            Console.WriteLine("\nUsage: HsmTest [port_name]");
             return;
         }
 

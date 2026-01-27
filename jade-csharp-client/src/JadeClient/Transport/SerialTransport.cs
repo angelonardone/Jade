@@ -1,4 +1,5 @@
 using System.IO.Ports;
+using System.Runtime.InteropServices;
 using JadeClient.Exceptions;
 
 namespace JadeClient.Transport;
@@ -198,9 +199,120 @@ public class SerialTransport : IJadeTransport
     /// Lists available serial ports on the system.
     /// </summary>
     /// <returns>Array of available port names.</returns>
+    /// <remarks>
+    /// Port names vary by operating system:
+    /// - Windows: COM1, COM3, COM4, etc.
+    /// - macOS: /dev/cu.usbserial-XXXXX, /dev/tty.usbserial-XXXXX
+    /// - Linux: /dev/ttyUSB0, /dev/ttyACM0, /dev/ttyS0
+    /// </remarks>
     public static string[] GetAvailablePorts()
     {
         return SerialPort.GetPortNames();
+    }
+
+    /// <summary>
+    /// Gets the current operating system platform.
+    /// </summary>
+    /// <returns>The detected OS platform.</returns>
+    public static OSPlatform GetCurrentPlatform()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            return OSPlatform.Windows;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return OSPlatform.OSX;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            return OSPlatform.Linux;
+
+        // Default to Linux for other Unix-like systems (FreeBSD, etc.)
+        return OSPlatform.Linux;
+    }
+
+    /// <summary>
+    /// Discovers serial ports that are likely to be Jade or similar USB-serial devices.
+    /// Filters ports based on the current operating system's naming conventions.
+    /// </summary>
+    /// <returns>Array of port names that match typical USB-serial device patterns.</returns>
+    /// <remarks>
+    /// Detection patterns by OS:
+    /// - Windows: All COM ports (except COM1 which is usually a legacy port)
+    /// - macOS: Ports containing "usbserial", "usbmodem", or "wchusbserial" (CH340/CH9102 chips)
+    /// - Linux: Ports starting with "ttyUSB" or "ttyACM" (USB-serial and USB CDC ACM)
+    /// </remarks>
+    public static string[] DiscoverJadePorts()
+    {
+        var allPorts = GetAvailablePorts();
+        var platform = GetCurrentPlatform();
+
+        if (platform == OSPlatform.Windows)
+        {
+            // On Windows, most USB-serial devices appear as COM ports
+            // Filter out COM1 which is typically a legacy serial port
+            return allPorts
+                .Where(p => p.StartsWith("COM", StringComparison.OrdinalIgnoreCase))
+                .Where(p => !p.Equals("COM1", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(p => p)
+                .ToArray();
+        }
+        else if (platform == OSPlatform.OSX)
+        {
+            // On macOS, USB-serial devices appear as /dev/cu.* or /dev/tty.*
+            // Common patterns:
+            // - /dev/cu.usbserial-XXXXX (FTDI, CP210x, etc.)
+            // - /dev/cu.usbmodem-XXXXX (CDC ACM devices)
+            // - /dev/cu.wchusbserialXXXX (CH340/CH9102 chips)
+            // - /dev/cu.SLAB_USBtoUART (Silicon Labs)
+            var patterns = new[] { "usbserial", "usbmodem", "wchusbserial", "SLAB_USB" };
+            return allPorts
+                .Where(p => patterns.Any(pattern => p.Contains(pattern, StringComparison.OrdinalIgnoreCase)))
+                .OrderBy(p => p)
+                .ToArray();
+        }
+        else // Linux and other Unix-like
+        {
+            // On Linux, USB-serial devices appear as:
+            // - /dev/ttyUSB0, /dev/ttyUSB1, etc. (FTDI, CP210x, CH340, etc.)
+            // - /dev/ttyACM0, /dev/ttyACM1, etc. (CDC ACM devices like CH9102)
+            return allPorts
+                .Where(p => p.Contains("ttyUSB") || p.Contains("ttyACM"))
+                .OrderBy(p => p)
+                .ToArray();
+        }
+    }
+
+    /// <summary>
+    /// Attempts to find the first available Jade device port.
+    /// </summary>
+    /// <returns>The port name if found, null otherwise.</returns>
+    public static string? FindJadePort()
+    {
+        var jadePorts = DiscoverJadePorts();
+        return jadePorts.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Provides information about expected port names for the current operating system.
+    /// </summary>
+    /// <returns>A description of expected port naming conventions.</returns>
+    public static string GetPortNamingHelp()
+    {
+        var platform = GetCurrentPlatform();
+
+        if (platform == OSPlatform.Windows)
+        {
+            return "On Windows, Jade devices appear as COM ports (e.g., COM3, COM4).\n" +
+                   "Check Device Manager > Ports (COM & LPT) to find your device.";
+        }
+        else if (platform == OSPlatform.OSX)
+        {
+            return "On macOS, Jade devices appear as /dev/cu.usbserial-XXXXX or similar.\n" +
+                   "Run 'ls /dev/cu.*' in Terminal to list available ports.";
+        }
+        else
+        {
+            return "On Linux, Jade devices appear as /dev/ttyUSB0 or /dev/ttyACM0.\n" +
+                   "Run 'ls /dev/tty*' in terminal to list available ports.\n" +
+                   "You may need to add your user to the 'dialout' group for access.";
+        }
     }
 
     /// <summary>
