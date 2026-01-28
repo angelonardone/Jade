@@ -67,6 +67,10 @@ coverage*.info
 
 # Publish
 *.Publish.xml
+publish/
+publish-*/
+test-app/
+test-win/
 
 # OS files
 .DS_Store

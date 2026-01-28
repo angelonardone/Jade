@@ -57,16 +57,28 @@ public class SerialTransport : IJadeTransport
                     ReadTimeout = SerialPort.InfiniteTimeout,
                     WriteTimeout = 30000,
                     Handshake = Handshake.None,
-                    DtrEnable = true,
-                    RtsEnable = true
+                    DtrEnable = false,
+                    RtsEnable = false
                 };
 
                 _serialPort.Open();
 
-                // Allow device to initialize
-                Thread.Sleep(100);
+                // On Windows with CH9102/ESP32-based devices (like Jade), opening the serial
+                // port triggers a device reset regardless of DTR/RTS settings. We need to wait
+                // for the device to fully boot before sending commands.
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    // Wait for ESP32 bootloader + Jade firmware to initialize
+                    // The boot sequence takes approximately 2-3 seconds
+                    Thread.Sleep(3500);
+                }
+                else
+                {
+                    // On Linux/macOS, the device typically doesn't reset on port open
+                    Thread.Sleep(100);
+                }
 
-                // Drain any pending data
+                // Drain any boot messages or pending data
                 Drain();
             }
             catch (Exception ex)
