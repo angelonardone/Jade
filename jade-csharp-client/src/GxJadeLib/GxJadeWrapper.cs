@@ -565,9 +565,9 @@ public static class GxJadeWrapper
                 info.TestnetRootPath = hsmInfo.TestnetRootPath ?? string.Empty;
                 info.MainnetRootPubkey = HexConverter.ToHex(hsmInfo.MainnetRootPubkey);
                 info.TestnetRootPubkey = HexConverter.ToHex(hsmInfo.TestnetRootPubkey);
-                info.OperationsCount = hsmInfo.OperationsCount;
-                info.AutoLockTimeout = hsmInfo.AutoLockTimeout;
-                info.AutoLockRemaining = hsmInfo.AutoLockRemaining ?? 0;
+                info.OperationsCount = (long)hsmInfo.OperationsCount;
+                info.AutoLockTimeout = (long)hsmInfo.AutoLockTimeout;
+                info.AutoLockRemaining = (long)(hsmInfo.AutoLockRemaining ?? 0);
             }
 
             return JadeOperationResult.Ok(connectionId);

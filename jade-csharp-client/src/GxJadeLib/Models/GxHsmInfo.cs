@@ -39,15 +39,15 @@ public class GxHsmInfo
     /// <summary>
     /// Total number of cryptographic operations performed.
     /// </summary>
-    public ulong OperationsCount { get; set; }
+    public long OperationsCount { get; set; }
 
     /// <summary>
     /// Auto-lock timeout in seconds (0 = disabled).
     /// </summary>
-    public uint AutoLockTimeout { get; set; }
+    public long AutoLockTimeout { get; set; }
 
     /// <summary>
     /// Remaining time before auto-lock in seconds (0 if disabled or not applicable).
     /// </summary>
-    public uint AutoLockRemaining { get; set; }
+    public long AutoLockRemaining { get; set; }
 }
