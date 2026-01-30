@@ -24,57 +24,57 @@ Console.WriteLine("Searching for Jade device...");
 Console.WriteLine($"  Platform: {SerialTransport.GetCurrentPlatform()}\n");
 
 string? jadePort = config.SerialPort;
+SerialTransport? transport = null;
+JadeRpc? rpc = null;
+VersionInfo? info = null;
 
-if (string.IsNullOrEmpty(jadePort))
+if (!string.IsNullOrEmpty(jadePort))
 {
-    // Use OS-aware port discovery
-    jadePort = SerialTransport.FindJadePort();
+    // User specified a port, try it directly
+    Console.WriteLine($"Using configured port: {jadePort}");
+    transport = new SerialTransport(jadePort);
+    rpc = new JadeRpc(transport);
 }
-
-if (jadePort == null)
+else
 {
-    Console.WriteLine("ERROR: No Jade device found.");
-    Console.WriteLine("Please connect your Jade device via USB and try again.\n");
+    // Use library method to probe all ports and find the actual Jade device
+    var probeResult = await SerialTransport.FindAndVerifyJadeAsync(
+        probeTimeout: TimeSpan.FromSeconds(5),
+        progress: new Progress<string>(msg => Console.WriteLine($"  {msg}")));
 
-    var allPorts = SerialTransport.GetAvailablePorts();
-    var jadePorts = SerialTransport.DiscoverJadePorts();
-
-    if (jadePorts.Length > 0)
+    if (probeResult == null)
     {
-        Console.WriteLine("Detected USB-serial ports:");
-        foreach (var port in jadePorts)
-            Console.WriteLine($"  - {port}");
-    }
-    else if (allPorts.Length > 0)
-    {
-        Console.WriteLine("All available ports (none matched Jade patterns):");
-        foreach (var port in allPorts)
-            Console.WriteLine($"  - {port}");
-    }
-    else
-    {
-        Console.WriteLine("No serial ports detected on this system.");
+        Console.WriteLine("\nERROR: No Jade device found on any port.");
+        Console.WriteLine("Please connect your Jade device via USB and try again.\n");
+        Console.WriteLine($"{SerialTransport.GetPortNamingHelp()}");
+        Environment.Exit(1);
+        return; // Unreachable but satisfies compiler null analysis
     }
 
-    Console.WriteLine($"\n{SerialTransport.GetPortNamingHelp()}");
-    Environment.Exit(1);
+    jadePort = probeResult.PortName;
+    transport = probeResult.Transport;
+    info = probeResult.VersionInfo; // Already have device info from probing
+    rpc = new JadeRpc(transport);
+    Console.WriteLine();
 }
-
-Console.WriteLine($"Found Jade on {jadePort}\n");
-
-// Connect to Jade
-var transport = new SerialTransport(jadePort);
-var rpc = new JadeRpc(transport);
 
 try
 {
-    Console.WriteLine("Connecting to Jade...");
-    await transport.ConnectAsync();
-    Console.WriteLine("Connected!\n");
+    // Connect if not already connected (when port was specified via config)
+    if (!transport!.IsConnected)
+    {
+        Console.WriteLine($"Connecting to Jade on {jadePort}...");
+        await transport.ConnectAsync();
+    }
+    Console.WriteLine($"Connected to Jade on {jadePort}!\n");
 
-    // Get device info
-    Console.WriteLine("Getting device info...");
-    var info = await rpc.GetVersionInfoAsync();
+    // Get device info (only if we don't already have it from probing)
+    if (info == null)
+    {
+        Console.WriteLine("Getting device info...");
+        info = await rpc!.GetVersionInfoAsync();
+    }
+    Console.WriteLine($"Device info:");
     Console.WriteLine($"  Firmware: {info.JadeVersion}");
     Console.WriteLine($"  State: {info.State}");
     Console.WriteLine($"  Has PIN: {info.HasPin}\n");

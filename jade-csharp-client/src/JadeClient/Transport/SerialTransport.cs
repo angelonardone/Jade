@@ -1,6 +1,8 @@
 using System.IO.Ports;
 using System.Runtime.InteropServices;
 using JadeClient.Exceptions;
+using JadeClient.Models;
+using JadeClient.Protocol;
 
 namespace JadeClient.Transport;
 
@@ -299,6 +301,89 @@ public class SerialTransport : IJadeTransport
     {
         var jadePorts = DiscoverJadePorts();
         return jadePorts.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Probes all candidate serial ports to find and verify a connected Jade device.
+    /// This method connects to each port and sends a get_version_info command to verify
+    /// that a real Jade device is present.
+    /// </summary>
+    /// <param name="probeTimeout">Timeout for each port probe (default: 5 seconds).</param>
+    /// <param name="progress">Optional progress reporter for status updates.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A JadeProbeResult with the connected transport and device info, or null if no Jade was found.</returns>
+    /// <remarks>
+    /// The returned transport is already connected and ready to use.
+    /// The caller is responsible for disposing the transport when done.
+    /// </remarks>
+    public static async Task<JadeProbeResult?> FindAndVerifyJadeAsync(
+        TimeSpan? probeTimeout = null,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        var timeout = probeTimeout ?? TimeSpan.FromSeconds(5);
+        var candidatePorts = DiscoverJadePorts();
+
+        if (candidatePorts.Length == 0)
+        {
+            // Fall back to all available ports
+            candidatePorts = GetAvailablePorts();
+        }
+
+        if (candidatePorts.Length == 0)
+        {
+            progress?.Report("No serial ports detected on this system.");
+            return null;
+        }
+
+        progress?.Report($"Found {candidatePorts.Length} candidate port(s), probing for Jade device...");
+
+        foreach (var port in candidatePorts)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            progress?.Report($"Trying {port}...");
+
+            SerialTransport? testTransport = null;
+            JadeRpc? testRpc = null;
+
+            try
+            {
+                testTransport = new SerialTransport(port);
+                await testTransport.ConnectAsync(cancellationToken);
+
+                testRpc = new JadeRpc(testTransport);
+
+                // Try to get version info with a timeout
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(timeout);
+
+                var versionInfo = await testRpc.GetVersionInfoAsync(cts.Token);
+
+                // Success! We found a real Jade device
+                progress?.Report($"Jade found on {port} (v{versionInfo.JadeVersion})");
+
+                // Don't dispose - we're returning these to the caller
+                return new JadeProbeResult(testTransport, versionInfo, port);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Timeout on this port - not a Jade or device not responding
+                progress?.Report($"{port}: timeout (not a Jade)");
+                testRpc?.Dispose();
+                testTransport?.Dispose();
+            }
+            catch (Exception ex)
+            {
+                // Connection or communication error
+                progress?.Report($"{port}: {ex.Message}");
+                testRpc?.Dispose();
+                testTransport?.Dispose();
+            }
+        }
+
+        progress?.Report("No Jade device found on any port.");
+        return null;
     }
 
     /// <summary>

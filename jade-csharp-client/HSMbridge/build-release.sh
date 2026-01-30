@@ -42,13 +42,22 @@ for TARGET in "${TARGETS[@]}"; do
 
     PUBLISH_DIR="$OUTPUT_DIR/$FOLDER"
 
+    # Restore NuGet packages specifically for this runtime identifier
+    # This ensures all platform-specific native libraries are downloaded
+    echo "    Restoring packages for $RID..."
+    dotnet restore "$PROJECT_DIR/HSMbridge.csproj" \
+        --runtime "$RID"
+
+    # Publish with explicit runtime and ensure native libs are bundled correctly
     dotnet publish "$PROJECT_DIR/HSMbridge.csproj" \
         --configuration Release \
         --runtime "$RID" \
         --self-contained true \
         --output "$PUBLISH_DIR" \
+        --no-restore \
         -p:PublishSingleFile=true \
         -p:IncludeNativeLibrariesForSelfExtract=true \
+        -p:IncludeAllContentForSelfExtract=true \
         -p:EnableCompressionInSingleFile=true \
         -p:Version="$VERSION"
 

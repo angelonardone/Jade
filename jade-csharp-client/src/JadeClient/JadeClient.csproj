@@ -27,8 +27,18 @@
     <!-- CBOR serialization -->
     <PackageReference Include="PeterO.Cbor" Version="4.5.2" />
 
-    <!-- Serial port communication -->
+    <!-- Serial port communication - explicitly include all runtimes for cross-platform publishing -->
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+  <!-- Ensure runtime-specific native libraries are included when publishing -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <_EnableSingleFileAnalyzer>false</_EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <!-- Include native libraries in single-file publish -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.IO.Ports.Legacy" Value="false" />
   </ItemGroup>
 
 </Project>
