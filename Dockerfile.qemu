@@ -7,20 +7,37 @@ WORKDIR /jade
 COPY . .
 RUN cp ${SDK_CONFIG} sdkconfig.defaults
 RUN . /root/esp/esp-idf/export.sh && idf.py all
-RUN ./tools/fwprep.py build/jade.bin build
+# Install zopfli for fwprep.py (OTA compression)
+RUN . /root/esp/esp-idf/export.sh && pip install zopfli
+RUN . /root/esp/esp-idf/export.sh && ./tools/fwprep.py build/jade.bin build
 
 ENV PATH=$PATH:/jade/main/qemu
-RUN make-flash-img.sh
+RUN . /root/esp/esp-idf/export.sh && make-flash-img.sh
 
 FROM debian:bookworm-slim@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc
 
-RUN apt-get update -yqq && apt-get install -yqq libpixman-1-dev libglib2.0-dev libslirp-dev libncurses-dev
+# Install runtime libraries needed by QEMU
+RUN apt-get update -yqq && apt-get install -yqq --no-install-recommends \
+    libpixman-1-0 libglib2.0-0 libslirp0 libncurses6 libsdl2-2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy Espressif QEMU from builder (installed by idf_tools.py)
+COPY --from=builder /root/.espressif/tools/qemu-xtensa /root/.espressif/tools/qemu-xtensa
 
 COPY --from=builder /flash_image.bin /flash_image.bin
 COPY --from=builder /qemu_efuse.bin /qemu_efuse.bin
 
 COPY --from=builder /jade/main/qemu/ /jade/main/qemu/
 
-ENV PATH=$PATH:/jade/main/qemu
+# Add QEMU to PATH
+ENV PATH=$PATH:/jade/main/qemu:/root/.espressif/tools/qemu-xtensa/esp_develop_9.0.0_20240606/qemu/bin
 
-CMD [ "qemu_run.sh" ]
+# Run QEMU directly
+CMD ["qemu-system-xtensa", "-nographic", \
+     "-machine", "esp32", \
+     "-m", "4M", \
+     "-drive", "file=/flash_image.bin,if=mtd,format=raw", \
+     "-nic", "user,model=open_eth,id=lo0,hostfwd=tcp:0.0.0.0:30121-:30121,hostfwd=tcp:0.0.0.0:30122-:30122", \
+     "-drive", "file=/qemu_efuse.bin,if=none,format=raw,id=efuse", \
+     "-global", "driver=nvram.esp32.efuse,property=drive,value=efuse", \
+     "-serial", "pty"]

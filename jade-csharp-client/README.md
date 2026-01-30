@@ -7,6 +7,7 @@ A C# library for communicating with Blockstream Jade hardware wallet devices usi
 ### Implemented
 
 - **Serial Transport** - USB connection to Jade devices
+- **TCP Transport** - Network connection to QEMU emulator or remote devices
 - **CBOR-RPC Protocol** - Full request/response serialization
 - **Device Info** - Get firmware version, board type, state, etc.
 - **Entropy** - Add entropy to device RNG
@@ -105,6 +106,25 @@ foreach (var port in ports)
 using var pinServer = new RemotePinServerHandler("https://my-pinserver.example.com");
 bool authenticated = await rpc.AuthUserAsync(pinServer, "mainnet");
 ```
+
+### Testing with QEMU Emulator (No Hardware Required)
+
+You can test the C# client without a physical Jade device using the QEMU emulator:
+
+```csharp
+using JadeClient.Transport;
+using JadeClient.Protocol;
+
+// Connect to QEMU emulator via TCP
+using var transport = new TcpTransport("localhost", 30121);
+using var rpc = new JadeRpc(transport);
+
+await rpc.ConnectAsync();
+var version = await rpc.GetVersionInfoAsync();
+Console.WriteLine($"QEMU Jade: {version.JadeVersion}");
+```
+
+See [EMULATOR_TESTING.md](EMULATOR_TESTING.md) for complete setup instructions.
 
 ## Architecture
 
