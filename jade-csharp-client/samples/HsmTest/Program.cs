@@ -15,40 +15,71 @@ class Program
         Console.WriteLine("JadeClient C# Library - HSM Mode Test");
         Console.WriteLine("======================================\n");
 
-        // Detect platform and find Jade device
-        var platform = SerialTransport.GetCurrentPlatform();
-        Console.WriteLine($"Platform: {platform}\n");
+        // Check for QEMU/TCP connection
+        bool useQemu = args.Length > 0 && (args[0] == "--qemu" || args[0].StartsWith("tcp:"));
+        string tcpHost = "localhost";
+        int tcpPort = TcpTransport.DefaultQemuPort;
 
-        // Auto-detect or use command line argument
-        string? jadePort = args.Length > 0 ? args[0] : SerialTransport.FindJadePort();
-
-        if (jadePort == null)
+        if (args.Length > 0 && args[0].StartsWith("tcp:"))
         {
-            Console.WriteLine("No Jade device found. Please connect your Jade and try again.\n");
-
-            var jadePorts = SerialTransport.DiscoverJadePorts();
-            if (jadePorts.Length > 0)
-            {
-                Console.WriteLine("Detected USB-serial ports:");
-                foreach (var port in jadePorts)
-                    Console.WriteLine($"  - {port}");
-            }
-
-            Console.WriteLine($"\n{SerialTransport.GetPortNamingHelp()}");
-            Console.WriteLine("\nUsage: HsmTest [port_name]");
-            return;
+            // Parse tcp:host:port format
+            var parts = args[0].Substring(4).Split(':');
+            tcpHost = parts[0];
+            if (parts.Length > 1 && int.TryParse(parts[1], out int p))
+                tcpPort = p;
+            useQemu = true;
         }
 
-        Console.WriteLine($"Found Jade on {jadePort}");
+        IJadeTransport transport;
 
-        using var transport = new SerialTransport(jadePort);
+        if (useQemu)
+        {
+            Console.WriteLine($"Connecting to QEMU emulator at {tcpHost}:{tcpPort}...\n");
+            transport = new TcpTransport(tcpHost, tcpPort);
+        }
+        else
+        {
+            // Detect platform and find Jade device
+            var platform = SerialTransport.GetCurrentPlatform();
+            Console.WriteLine($"Platform: {platform}\n");
+
+            // Auto-detect or use command line argument
+            string? jadePort = args.Length > 0 ? args[0] : SerialTransport.FindJadePort();
+
+            if (jadePort == null)
+            {
+                Console.WriteLine("No Jade device found. Please connect your Jade and try again.\n");
+
+                var jadePorts = SerialTransport.DiscoverJadePorts();
+                if (jadePorts.Length > 0)
+                {
+                    Console.WriteLine("Detected USB-serial ports:");
+                    foreach (var port in jadePorts)
+                        Console.WriteLine($"  - {port}");
+                }
+
+                Console.WriteLine($"\n{SerialTransport.GetPortNamingHelp()}");
+                Console.WriteLine("\nUsage: HsmTest [port_name]");
+                Console.WriteLine("       HsmTest --qemu");
+                Console.WriteLine("       HsmTest tcp:localhost:30121");
+                return;
+            }
+
+            Console.WriteLine($"Found Jade on {jadePort}");
+            transport = new SerialTransport(jadePort);
+        }
+
+        using var _ = transport;
         using var rpc = new JadeRpc(transport);
 
         try
         {
-            Console.WriteLine("Connecting to Jade...");
+            Console.WriteLine("Connecting...");
             await transport.ConnectAsync();
             Console.WriteLine("Connected!\n");
+
+            // Drain any pending data
+            transport.Drain();
 
             // Step 1: Get device info
             Console.WriteLine("--- Step 1: Device Info ---");

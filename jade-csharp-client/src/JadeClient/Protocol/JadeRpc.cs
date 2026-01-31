@@ -258,6 +258,31 @@ public class JadeRpc : IDisposable
     }
 
     /// <summary>
+    /// Set the wallet mnemonic (DEBUG builds only, e.g., QEMU emulator).
+    /// </summary>
+    /// <param name="mnemonic">BIP39 mnemonic phrase (12 or 24 words).</param>
+    /// <param name="passphrase">Optional BIP39 passphrase.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if the mnemonic was set successfully.</returns>
+    public async Task<bool> SetMnemonicAsync(
+        string mnemonic,
+        string? passphrase = null,
+        CancellationToken cancellationToken = default)
+    {
+        var parameters = new Dictionary<string, object>
+        {
+            ["mnemonic"] = mnemonic
+        };
+
+        if (!string.IsNullOrEmpty(passphrase))
+        {
+            parameters["passphrase"] = passphrase;
+        }
+
+        return await CallAsync<bool>("debug_set_mnemonic", parameters, cancellationToken: cancellationToken);
+    }
+
+    /// <summary>
     /// Get an extended public key (xpub) for a derivation path.
     /// </summary>
     /// <param name="network">Network (e.g., "mainnet", "testnet").</param>

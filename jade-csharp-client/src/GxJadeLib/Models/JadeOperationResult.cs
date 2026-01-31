@@ -34,9 +34,6 @@ public class JadeOperationResult
     /// <summary>
     /// Creates a successful result.
     /// </summary>
-    /// <param name="connectionId">The connection ID.</param>
-    /// <param name="response">Optional response message.</param>
-    /// <returns>A successful JadeOperationResult.</returns>
     public static JadeOperationResult Ok(Guid connectionId, string response = "")
     {
         return new JadeOperationResult
@@ -52,10 +49,6 @@ public class JadeOperationResult
     /// <summary>
     /// Creates a failure result.
     /// </summary>
-    /// <param name="connectionId">The connection ID.</param>
-    /// <param name="error">The error message.</param>
-    /// <param name="code">The error code (default -1).</param>
-    /// <returns>A failed JadeOperationResult.</returns>
     public static JadeOperationResult Fail(Guid connectionId, string error, int code = -1)
     {
         return new JadeOperationResult
@@ -71,9 +64,6 @@ public class JadeOperationResult
     /// <summary>
     /// Creates a failure result with no connection.
     /// </summary>
-    /// <param name="error">The error message.</param>
-    /// <param name="code">The error code (default -1).</param>
-    /// <returns>A failed JadeOperationResult.</returns>
     public static JadeOperationResult Fail(string error, int code = -1)
     {
         return Fail(Guid.Empty, error, code);

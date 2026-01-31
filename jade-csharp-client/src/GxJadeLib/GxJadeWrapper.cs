@@ -14,15 +14,15 @@ namespace GxJadeLib;
 internal class JadeConnection : IDisposable
 {
     public JadeRpc Rpc { get; }
-    public SerialTransport Transport { get; }
-    public string PortName { get; }
+    public IJadeTransport Transport { get; }
+    public string ConnectionInfo { get; }
     public DateTime ConnectedAt { get; }
 
-    public JadeConnection(SerialTransport transport, JadeRpc rpc, string portName)
+    public JadeConnection(IJadeTransport transport, JadeRpc rpc, string connectionInfo)
     {
         Transport = transport;
         Rpc = rpc;
-        PortName = portName;
+        ConnectionInfo = connectionInfo;
         ConnectedAt = DateTime.UtcNow;
     }
 
@@ -98,6 +98,50 @@ public static class GxJadeWrapper
         {
             return HandleException(Guid.Empty, ex);
         }
+    }
+
+    /// <summary>
+    /// Connect to a Jade device via TCP (e.g., QEMU emulator).
+    /// </summary>
+    /// <param name="host">Host address (e.g., "localhost", "127.0.0.1").</param>
+    /// <param name="port">TCP port (default: 30121 for QEMU).</param>
+    /// <returns>JadeOperationResult with ConnectionId on success.</returns>
+    public static JadeOperationResult ConnectTcp(string host, int port = TcpTransport.DefaultQemuPort)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+            return JadeOperationResult.Fail("Host cannot be empty");
+
+        try
+        {
+            var transport = new TcpTransport(host, port);
+            var rpc = new JadeRpc(transport, ownsTransport: false);
+
+            Task.Run(async () => await rpc.ConnectAsync()).Wait();
+
+            var connectionId = Guid.NewGuid();
+            var connectionInfo = $"tcp:{host}:{port}";
+            var connection = new JadeConnection(transport, rpc, connectionInfo);
+
+            lock (_lock)
+            {
+                _connections[connectionId] = connection;
+            }
+
+            return JadeOperationResult.Ok(connectionId, $"Connected to {connectionInfo}");
+        }
+        catch (Exception ex)
+        {
+            return HandleException(Guid.Empty, ex);
+        }
+    }
+
+    /// <summary>
+    /// Connect to a local QEMU emulator on the default port (30121).
+    /// </summary>
+    /// <returns>JadeOperationResult with ConnectionId on success.</returns>
+    public static JadeOperationResult ConnectQemu()
+    {
+        return ConnectTcp("localhost", TcpTransport.DefaultQemuPort);
     }
 
     /// <summary>
@@ -279,6 +323,38 @@ public static class GxJadeWrapper
             return success
                 ? JadeOperationResult.Ok(connectionId)
                 : JadeOperationResult.Fail(connectionId, "Failed to add entropy");
+        }
+        catch (Exception ex)
+        {
+            return HandleException(connectionId, ex);
+        }
+    }
+
+    /// <summary>
+    /// Set the wallet mnemonic (DEBUG builds only, e.g., QEMU emulator).
+    /// </summary>
+    /// <param name="connectionId">The connection ID.</param>
+    /// <param name="mnemonic">BIP39 mnemonic phrase (12 or 24 words, space-separated).</param>
+    /// <param name="passphrase">Optional BIP39 passphrase.</param>
+    /// <returns>JadeOperationResult indicating success or failure.</returns>
+    public static JadeOperationResult SetMnemonic(Guid connectionId, string mnemonic, string passphrase = "")
+    {
+        try
+        {
+            var rpc = GetRpc(connectionId);
+            if (rpc == null)
+            {
+                return JadeOperationResult.Fail(connectionId, "Connection not found");
+            }
+
+            bool success = false;
+            Task.Run(async () => success = await rpc.SetMnemonicAsync(
+                mnemonic,
+                string.IsNullOrEmpty(passphrase) ? null : passphrase)).Wait();
+
+            return success
+                ? JadeOperationResult.Ok(connectionId, "Wallet initialized")
+                : JadeOperationResult.Fail(connectionId, "Failed to set mnemonic");
         }
         catch (Exception ex)
         {
