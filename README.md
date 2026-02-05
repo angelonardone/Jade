@@ -1,3 +1,26 @@
+# Distributed Cryptography
+
+=== BEGIN Distributed Cryptography modifications ===
+
+This is a copy of Jade's hardware wallet that we are modifing to work with [Distributed Cryptogrpahy's Vault](https://wiki.distributedcryptography.com/wiki.aspx?9,Toc%3aOur+digital+Vault%2fWallet,)
+
+## List of API additions
+
+* Implementation of HSM module
+* Implementation of HSM gateway
+
+Briefly, the HSMbridge exposes Jade's (new) HSM API over a secure bridge so external HSM services or gateways can perform signing, encryption and key-management operations without direct device access. See the HSMbridge [README.md](/jade-csharp-client/HSMbridge/README.md) for deployment and usage details
+
+
+Both functionalities are based (and are compatible) with [Distributed Cryptograpy's HSM](https://wiki.distributedcryptography.com/wiki.aspx?1096,What+is+an+HSM%3f)
+
+
+
+
+=== END Distributed Cryptography modifications ===
+
+
+----
 # Jade Firmware
 
 NOTE: The below instructions are for Jade developers with access to Jade development boards or for those wanting to build and flash their own esp32/esp32s3 consumer devices - e.g. M5Stack or TTGO T-Display boards.
