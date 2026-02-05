@@ -14,6 +14,7 @@ HSMbridge is a REST API server that exposes Jade HSM functionality over HTTP. It
 ## Features
 
 - REST API exposing all HSM operations (signing, encryption, key derivation)
+- NBitcoin-compatible REST API (`/HSM/rest`) for distributed cryptography integration
 - Automatic Jade device detection on USB
 - PIN authentication via remote PIN server
 - HSM mode activation with configurable timeout
@@ -152,6 +153,13 @@ Or run the test script:
 ```
 
 ## API Reference
+
+HSMbridge exposes two sets of REST APIs:
+
+- **`/api/hsm`** - Full-featured HSM API with hex-encoded binary data, configurable network, and standard HTTP error codes.
+- **`/HSM/rest`** - NBitcoin-compatible API with UTF-8 strings, Base64-encoded BIE1 encryption, and DoubleSHA256 message signing. See [NBitcoin-Compatible REST API](#nbitcoin-compatible-rest-api-hsmrest) below.
+
+### Core HSM API (`/api/hsm`)
 
 All binary data (hashes, public keys, signatures, plaintext, ciphertext) is **hex-encoded** in JSON requests and responses.
 
@@ -413,9 +421,210 @@ Deactivates HSM mode on the device. After locking, the device returns to normal 
 
 ---
 
+## Distributed Cryptography-Compatible REST API (`/HSM/rest`)
+
+HSMbridge also exposes an NBitcoin-compatible REST API that matches the [DistributedCryptographyLib](https://github.com/nickkuk/DistributedCryptographyLib) API specification. This allows Jade to act as a drop-in replacement for NBitcoin-based HSM services.
+
+**Key differences from `/api/hsm` endpoints:**
+
+| Aspect | `/api/hsm` | `/HSM/rest` |
+|--------|-----------|-------------|
+| Data encoding | Hex-encoded binary | UTF-8 strings (messages), Base64 (encrypted blobs) |
+| Encryption format | Separate fields (ciphertext, nonce, tag, ephemeralPubkey) | Single BIE1 blob (Base64) |
+| Signing input | Raw 32-byte hash (hex) | UTF-8 message (hashed internally with DoubleSHA256) |
+| ECDSA signature | DER-encoded | Compact 64 bytes (R \|\| S) |
+| Network | Configurable per request | Always mainnet |
+| Error handling | HTTP status codes (400, 500) | Always HTTP 200, errors in `error` field |
+
+---
+
+### Get Public Key
+
+```
+GET /HSM/rest/getPubKey?Indexkey={index}
+```
+
+Returns the compressed public key at the specified index.
+
+**Parameters:**
+- `Indexkey` (query, optional) - Key index (default: 0)
+
+**Response:**
+```json
+{
+  "publicKey": "02abc123def456...",
+  "error": ""
+}
+```
+
+---
+
+### BIE1 Encrypt
+
+```
+POST /HSM/rest/encrypt
+```
+
+Encrypts a UTF-8 message using BIE1 ECIES to the key at the specified index (encrypt to self).
+
+**Request:**
+```json
+{
+  "message": "Hello, World!",
+  "indexKey": 0
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | UTF-8 message to encrypt (max 1024 bytes when encoded) |
+| `indexKey` | int | Key index for encryption |
+
+**Response:**
+```json
+{
+  "encryptedMessage": "QklFMQN...Base64...",
+  "error": ""
+}
+```
+
+The `encryptedMessage` is a Base64-encoded BIE1 blob containing the ephemeral public key, ciphertext, and HMAC.
+
+---
+
+### BIE1 Encrypt to Public Key
+
+```
+POST /HSM/rest/encryptToPubKey
+```
+
+Encrypts a UTF-8 message using BIE1 ECIES to a specified recipient public key.
+
+**Request:**
+```json
+{
+  "message": "Hello, World!",
+  "publicKey": "02abc123def456..."
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | UTF-8 message to encrypt (max 1024 bytes when encoded) |
+| `publicKey` | string | Recipient's compressed or uncompressed public key (hex) |
+
+**Response:**
+```json
+{
+  "encryptedMessage": "QklFMQN...Base64...",
+  "error": ""
+}
+```
+
+---
+
+### BIE1 Decrypt
+
+```
+POST /HSM/rest/decrypt
+```
+
+Decrypts a BIE1 ECIES encrypted message using the key at the specified index.
+
+**Request:**
+```json
+{
+  "encryptedMessage": "QklFMQN...Base64...",
+  "indexKey": 0
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `encryptedMessage` | string | Base64-encoded BIE1 encrypted blob |
+| `indexKey` | int | Key index for decryption |
+
+**Response:**
+```json
+{
+  "message": "Hello, World!",
+  "error": ""
+}
+```
+
+---
+
+### Compact ECDSA Sign
+
+```
+POST /HSM/rest/sign
+```
+
+Signs a message using compact ECDSA. The message is internally hashed with DoubleSHA256(UTF-8(message)) to match NBitcoin's `SignCompact` behavior.
+
+**Request:**
+```json
+{
+  "message": "Message to sign",
+  "indexKey": 0
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | UTF-8 message to sign |
+| `indexKey` | int | Key index for signing |
+
+**Response:**
+```json
+{
+  "signature": "abc123...def456...",
+  "error": ""
+}
+```
+
+The `signature` is 64 bytes (128 hex chars) in compact format: R (32 bytes) || S (32 bytes).
+
+---
+
+### Schnorr Sign
+
+```
+POST /HSM/rest/SignSchnorr
+```
+
+Signs a message using Schnorr (BIP-340). The message is internally hashed with DoubleSHA256(UTF-8(message)) to match NBitcoin's behavior.
+
+**Request:**
+```json
+{
+  "message": "Message to sign",
+  "indexKey": 0
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | UTF-8 message to sign |
+| `indexKey` | int | Key index for signing |
+
+**Response:**
+```json
+{
+  "signature": "abc123...def456...",
+  "error": ""
+}
+```
+
+The `signature` is 64 bytes (128 hex chars) Schnorr signature.
+
+---
+
 ## Error Responses
 
-All endpoints return errors in this format:
+### `/api/hsm` endpoints
+
+All `/api/hsm` endpoints return errors in this format:
 
 ```json
 {
@@ -428,6 +637,18 @@ All endpoints return errors in this format:
 - `200` - Success
 - `400` - Bad request (invalid parameters)
 - `500` - Internal server error (device communication failure)
+
+### `/HSM/rest` endpoints
+
+All `/HSM/rest` endpoints always return HTTP 200. Errors are reported in the `error` field of the response body:
+
+```json
+{
+  "error": "Error message describing what went wrong"
+}
+```
+
+Check the `error` field - an empty string indicates success.
 
 ---
 
@@ -451,6 +672,38 @@ curl -X POST http://localhost:5001/api/hsm/sign \
 curl -X POST http://localhost:5001/api/hsm/encrypt \
   -H "Content-Type: application/json" \
   -d '{"network":"mainnet","index":0,"plaintext":"48656c6c6f"}'
+```
+
+### curl (NBitcoin REST API)
+
+```bash
+# Get public key at index 0
+curl "http://localhost:5001/HSM/rest/getPubKey?Indexkey=0"
+
+# Encrypt a message to self
+curl -X POST http://localhost:5001/HSM/rest/encrypt \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello, World!","indexKey":0}'
+
+# Encrypt to a specific public key
+curl -X POST http://localhost:5001/HSM/rest/encryptToPubKey \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Hello, World!","publicKey":"02abc123..."}'
+
+# Decrypt a message
+curl -X POST http://localhost:5001/HSM/rest/decrypt \
+  -H "Content-Type: application/json" \
+  -d '{"encryptedMessage":"QklFMQN...Base64...","indexKey":0}'
+
+# Sign with compact ECDSA
+curl -X POST http://localhost:5001/HSM/rest/sign \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Message to sign","indexKey":0}'
+
+# Sign with Schnorr
+curl -X POST http://localhost:5001/HSM/rest/SignSchnorr \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Message to sign","indexKey":0}'
 ```
 
 ### Python
@@ -494,6 +747,40 @@ response = requests.post(f"{BASE_URL}/api/hsm/decrypt", json={
 })
 decrypted_hex = response.json()["plaintext"]
 print(bytes.fromhex(decrypted_hex).decode())  # "Hello"
+```
+
+### Python (NBitcoin REST API)
+
+```python
+import requests
+
+BASE_URL = "http://localhost:5001"
+
+# Get public key
+response = requests.get(f"{BASE_URL}/HSM/rest/getPubKey", params={"Indexkey": 0})
+pubkey = response.json()["publicKey"]
+print(f"Public key: {pubkey}")
+
+# Encrypt and decrypt a message
+response = requests.post(f"{BASE_URL}/HSM/rest/encrypt", json={
+    "message": "Hello, World!",
+    "indexKey": 0
+})
+encrypted = response.json()["encryptedMessage"]
+print(f"Encrypted (Base64): {encrypted}")
+
+response = requests.post(f"{BASE_URL}/HSM/rest/decrypt", json={
+    "encryptedMessage": encrypted,
+    "indexKey": 0
+})
+print(f"Decrypted: {response.json()['message']}")  # "Hello, World!"
+
+# Sign a message
+response = requests.post(f"{BASE_URL}/HSM/rest/sign", json={
+    "message": "Message to sign",
+    "indexKey": 0
+})
+print(f"Signature: {response.json()['signature']}")
 ```
 
 ### JavaScript/Node.js
