@@ -602,6 +602,95 @@ public class JadeRpc : IDisposable
         return await CallAsync<bool>("hsm_lock", cancellationToken: cancellationToken);
     }
 
+    /// <summary>
+    /// Encrypt data using BIE1 ECIES (NBitcoin compatible).
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="plaintext">Data to encrypt (max 1024 bytes).</param>
+    /// <param name="theirPubkey">Optional recipient public key. If null, encrypts to self.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>BIE1 encrypted blob: "BIE1" + ephemeral_pubkey(33) + ciphertext + hmac(32).</returns>
+    public async Task<byte[]> HsmEncryptBie1Async(
+        string network,
+        uint index,
+        byte[] plaintext,
+        byte[]? theirPubkey = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (plaintext.Length > 1024)
+            throw new ArgumentException("Plaintext must not exceed 1024 bytes", nameof(plaintext));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["plaintext"] = plaintext
+        };
+
+        if (theirPubkey != null)
+            parameters["their_pubkey"] = theirPubkey;
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_encrypt_bie1", parameters, cancellationToken: cancellationToken);
+        return result.TryGetValue("encrypted", out var enc) && enc is byte[] encBytes ? encBytes : Array.Empty<byte>();
+    }
+
+    /// <summary>
+    /// Decrypt data using BIE1 ECIES (NBitcoin compatible).
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="encrypted">BIE1 encrypted blob.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The decrypted plaintext.</returns>
+    public async Task<byte[]> HsmDecryptBie1Async(
+        string network,
+        uint index,
+        byte[] encrypted,
+        CancellationToken cancellationToken = default)
+    {
+        if (encrypted.Length < 85)
+            throw new ArgumentException("Encrypted data too short for BIE1 format", nameof(encrypted));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["encrypted"] = encrypted
+        };
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_decrypt_bie1", parameters, cancellationToken: cancellationToken);
+        return result.TryGetValue("plaintext", out var pt) && pt is byte[] ptBytes ? ptBytes : Array.Empty<byte>();
+    }
+
+    /// <summary>
+    /// Sign a 32-byte hash with compact ECDSA signature (65 bytes: recid+27+4 || R || S).
+    /// </summary>
+    /// <param name="network">Network ("mainnet" or "testnet").</param>
+    /// <param name="index">Key index (non-hardened).</param>
+    /// <param name="hash">32-byte hash to sign.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>65-byte compact ECDSA signature.</returns>
+    public async Task<byte[]> HsmSignCompactAsync(
+        string network,
+        uint index,
+        byte[] hash,
+        CancellationToken cancellationToken = default)
+    {
+        if (hash.Length != 32)
+            throw new ArgumentException("Hash must be 32 bytes", nameof(hash));
+
+        var parameters = new Dictionary<string, object>
+        {
+            ["network"] = network,
+            ["index"] = index,
+            ["hash"] = hash
+        };
+
+        var result = await CallAsync<Dictionary<string, object?>>("hsm_sign_compact", parameters, cancellationToken: cancellationToken);
+        return result.TryGetValue("signature", out var sig) && sig is byte[] sigBytes ? sigBytes : Array.Empty<byte>();
+    }
+
     private static HsmInfo ParseHsmInfo(Dictionary<string, object?> result)
     {
         var info = new HsmInfo

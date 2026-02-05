@@ -19,10 +19,21 @@
 // Maximum plaintext size for encryption
 #define HSM_MAX_PLAINTEXT_SIZE 1024
 
-// AES-GCM constants
+// AES-GCM constants (legacy)
 #define HSM_AES_KEY_SIZE    32
 #define HSM_AES_NONCE_SIZE  12
 #define HSM_AES_TAG_SIZE    16
+
+// BIE1 ECIES constants (NBitcoin compatible)
+#define HSM_BIE1_MAGIC "BIE1"
+#define HSM_BIE1_MAGIC_LEN 4
+#define HSM_AES_CBC_KEY_SIZE 16   // AES-128
+#define HSM_AES_CBC_IV_SIZE 16
+#define HSM_HMAC_SIZE 32
+#define HSM_BIE1_MIN_LEN 85       // 4 magic + 33 pubkey + 16 min cipher + 32 hmac
+
+// Compact signature size (recovery byte + R + S)
+#define HSM_COMPACT_SIG_SIZE 65
 
 // Signature algorithm types
 typedef enum {
@@ -147,6 +158,25 @@ bool hsm_decrypt(hsm_network_t network, uint32_t index,
                  const uint8_t* ephemeral_pubkey, size_t ephemeral_pubkey_len,
                  const uint8_t* aad, size_t aad_len,
                  uint8_t* plaintext_out, size_t* plaintext_len);
+
+// BIE1 ECIES encryption (NBitcoin compatible)
+// Output format: "BIE1" + ephemeral_pubkey(33) + ciphertext + hmac(32)
+// Returns the total length of the encrypted blob in output_len
+bool hsm_encrypt_bie1(hsm_network_t network, uint32_t index,
+                      const uint8_t* plaintext, size_t plaintext_len,
+                      const uint8_t* their_pubkey, size_t their_pubkey_len,
+                      uint8_t* output, size_t output_buf_len, size_t* output_len);
+
+// BIE1 ECIES decryption (NBitcoin compatible)
+// Input format: "BIE1" + ephemeral_pubkey(33) + ciphertext + hmac(32)
+bool hsm_decrypt_bie1(hsm_network_t network, uint32_t index,
+                      const uint8_t* encrypted, size_t encrypted_len,
+                      uint8_t* plaintext_out, size_t plaintext_buf_len, size_t* plaintext_len);
+
+// Sign a 32-byte hash with compact ECDSA signature (65 bytes: recid+27+4 || R || S)
+bool hsm_sign_compact(hsm_network_t network, uint32_t index,
+                      const uint8_t* hash, size_t hash_len,
+                      uint8_t* signature_out, size_t sig_buf_len, size_t* sig_len);
 
 // Helper to convert network string to enum
 bool hsm_parse_network(const char* network_str, size_t str_len, hsm_network_t* network_out);

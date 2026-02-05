@@ -4,12 +4,15 @@
 #include "jade_log.h"
 #include "random.h"
 #include "sensitive.h"
+#include "utils/malloc_ext.h"
 
 #include <inttypes.h>
 #include <string.h>
 #include <time.h>
 
+#include <mbedtls/cipher.h>
 #include <mbedtls/gcm.h>
+#include <mbedtls/md.h>
 #include <sodium/utils.h>
 #include <wally_bip32.h>
 #include <wally_core.h>
@@ -668,6 +671,497 @@ bool hsm_decrypt(hsm_network_t network, uint32_t index,
     SENSITIVE_POP(shared_point);
     SENSITIVE_POP(privkey);
 
+    hsm_increment_ops();
+    return true;
+}
+
+// BIE1 ECIES encryption (NBitcoin compatible)
+// Key derivation: SHA512(ECDH_shared_pubkey) -> iv[0:16] + encKey[16:32] + hashKey[32:64]
+// Encryption: AES-128-CBC with PKCS7 padding
+// Output: "BIE1" + ephemeral_pubkey(33) + ciphertext + hmac(32)
+bool hsm_encrypt_bie1(hsm_network_t network, uint32_t index,
+                      const uint8_t* plaintext, size_t plaintext_len,
+                      const uint8_t* their_pubkey, size_t their_pubkey_len,
+                      uint8_t* output, size_t output_buf_len, size_t* output_len)
+{
+    JADE_ASSERT(plaintext);
+    JADE_ASSERT(plaintext_len <= HSM_MAX_PLAINTEXT_SIZE);
+    JADE_ASSERT(output);
+    JADE_ASSERT(output_len);
+
+    // Calculate padded ciphertext size (PKCS7 padding)
+    size_t padded_len = ((plaintext_len / 16) + 1) * 16;
+    size_t total_len = HSM_BIE1_MAGIC_LEN + EC_PUBLIC_KEY_LEN + padded_len + HSM_HMAC_SIZE;
+
+    if (output_buf_len < total_len) {
+        JADE_LOGE("Output buffer too small for BIE1: need %zu, have %zu", total_len, output_buf_len);
+        return false;
+    }
+
+    // Generate ephemeral key pair
+    uint8_t ephemeral_privkey[EC_PRIVATE_KEY_LEN];
+    uint8_t ephemeral_pubkey[EC_PUBLIC_KEY_LEN];
+    SENSITIVE_PUSH(ephemeral_privkey, sizeof(ephemeral_privkey));
+
+    get_random(ephemeral_privkey, sizeof(ephemeral_privkey));
+
+    int ret = wally_ec_public_key_from_private_key(ephemeral_privkey, sizeof(ephemeral_privkey),
+                                                    ephemeral_pubkey, sizeof(ephemeral_pubkey));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("Failed to derive ephemeral public key: %d", ret);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    // Determine recipient pubkey
+    uint8_t recipient_pubkey[EC_PUBLIC_KEY_LEN];
+    if (their_pubkey && their_pubkey_len > 0) {
+        if (their_pubkey_len == EC_PUBLIC_KEY_LEN) {
+            memcpy(recipient_pubkey, their_pubkey, EC_PUBLIC_KEY_LEN);
+        } else if (their_pubkey_len == EC_PUBLIC_KEY_UNCOMPRESSED_LEN) {
+            // Compress uncompressed key
+            ret = wally_ec_public_key_decompress(their_pubkey, their_pubkey_len,
+                                                  recipient_pubkey, sizeof(recipient_pubkey));
+            if (ret != WALLY_OK) {
+                JADE_LOGE("Invalid recipient pubkey");
+                SENSITIVE_POP(ephemeral_privkey);
+                return false;
+            }
+        } else {
+            JADE_LOGE("Invalid recipient pubkey length: %zu", their_pubkey_len);
+            SENSITIVE_POP(ephemeral_privkey);
+            return false;
+        }
+    } else {
+        // Self-encryption: encrypt to our own pubkey at this index
+        if (!hsm_get_pubkey(network, index, recipient_pubkey, sizeof(recipient_pubkey))) {
+            SENSITIVE_POP(ephemeral_privkey);
+            return false;
+        }
+    }
+
+    // ECDH: compute shared pubkey (not just x-coordinate)
+    // NBitcoin uses GetSharedPubkey which returns the full compressed pubkey after ECDH
+    uint8_t shared_pubkey[EC_PUBLIC_KEY_LEN];
+    SENSITIVE_PUSH(shared_pubkey, sizeof(shared_pubkey));
+
+    ret = wally_ecdh(recipient_pubkey, sizeof(recipient_pubkey),
+                     ephemeral_privkey, sizeof(ephemeral_privkey),
+                     shared_pubkey, sizeof(shared_pubkey));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("ECDH for BIE1 encryption failed: %d", ret);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    // Key derivation: SHA512(shared_pubkey)
+    uint8_t shared_key[SHA512_LEN];
+    SENSITIVE_PUSH(shared_key, sizeof(shared_key));
+
+    ret = wally_sha512(shared_pubkey, sizeof(shared_pubkey), shared_key, sizeof(shared_key));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("SHA512 key derivation failed: %d", ret);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    // Split key: iv[0:16], encKey[16:32], hashKey[32:64]
+    uint8_t* iv = shared_key;                    // 16 bytes
+    uint8_t* enc_key = shared_key + 16;          // 16 bytes
+    uint8_t* hash_key = shared_key + 32;         // 32 bytes
+
+    // Build output prefix: "BIE1" + ephemeral_pubkey
+    memcpy(output, HSM_BIE1_MAGIC, HSM_BIE1_MAGIC_LEN);
+    memcpy(output + HSM_BIE1_MAGIC_LEN, ephemeral_pubkey, EC_PUBLIC_KEY_LEN);
+
+    uint8_t* ciphertext = output + HSM_BIE1_MAGIC_LEN + EC_PUBLIC_KEY_LEN;
+
+    // Prepare plaintext with PKCS7 padding
+    uint8_t* padded_plaintext = JADE_MALLOC(padded_len);
+    SENSITIVE_PUSH(padded_plaintext, padded_len);
+    memcpy(padded_plaintext, plaintext, plaintext_len);
+    uint8_t pad_value = (uint8_t)(padded_len - plaintext_len);
+    memset(padded_plaintext + plaintext_len, pad_value, pad_value);
+
+    // AES-128-CBC encryption
+    mbedtls_cipher_context_t cipher;
+    mbedtls_cipher_init(&cipher);
+
+    ret = mbedtls_cipher_setup(&cipher, mbedtls_cipher_info_from_type(MBEDTLS_CIPHER_AES_128_CBC));
+    if (ret != 0) {
+        JADE_LOGE("AES cipher setup failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(padded_plaintext);
+        free(padded_plaintext);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    ret = mbedtls_cipher_setkey(&cipher, enc_key, 128, MBEDTLS_ENCRYPT);
+    if (ret != 0) {
+        JADE_LOGE("AES setkey failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(padded_plaintext);
+        free(padded_plaintext);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    ret = mbedtls_cipher_set_iv(&cipher, iv, HSM_AES_CBC_IV_SIZE);
+    if (ret != 0) {
+        JADE_LOGE("AES set IV failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(padded_plaintext);
+        free(padded_plaintext);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    // Set padding mode to none since we did PKCS7 manually
+    ret = mbedtls_cipher_set_padding_mode(&cipher, MBEDTLS_PADDING_NONE);
+    if (ret != 0) {
+        JADE_LOGE("AES set padding mode failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(padded_plaintext);
+        free(padded_plaintext);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    size_t olen = 0;
+    size_t finish_olen = 0;
+    ret = mbedtls_cipher_update(&cipher, padded_plaintext, padded_len, ciphertext, &olen);
+    if (ret != 0) {
+        JADE_LOGE("AES encrypt update failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(padded_plaintext);
+        free(padded_plaintext);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    ret = mbedtls_cipher_finish(&cipher, ciphertext + olen, &finish_olen);
+    mbedtls_cipher_free(&cipher);
+    SENSITIVE_POP(padded_plaintext);
+    free(padded_plaintext);
+
+    if (ret != 0) {
+        JADE_LOGE("AES encrypt finish failed: %d", ret);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    size_t ciphertext_len = olen + finish_olen;
+
+    // Calculate HMAC-SHA256 over entire output (magic + pubkey + ciphertext)
+    size_t data_to_mac_len = HSM_BIE1_MAGIC_LEN + EC_PUBLIC_KEY_LEN + ciphertext_len;
+    uint8_t hmac[HSM_HMAC_SIZE];
+
+    ret = wally_hmac_sha256(hash_key, 32, output, data_to_mac_len, hmac, sizeof(hmac));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("HMAC-SHA256 failed: %d", ret);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(ephemeral_privkey);
+        return false;
+    }
+
+    // Append HMAC
+    memcpy(output + data_to_mac_len, hmac, HSM_HMAC_SIZE);
+
+    *output_len = data_to_mac_len + HSM_HMAC_SIZE;
+
+    SENSITIVE_POP(shared_key);
+    SENSITIVE_POP(shared_pubkey);
+    SENSITIVE_POP(ephemeral_privkey);
+
+    hsm_increment_ops();
+    return true;
+}
+
+// BIE1 ECIES decryption (NBitcoin compatible)
+bool hsm_decrypt_bie1(hsm_network_t network, uint32_t index,
+                      const uint8_t* encrypted, size_t encrypted_len,
+                      uint8_t* plaintext_out, size_t plaintext_buf_len, size_t* plaintext_len)
+{
+    JADE_ASSERT(encrypted);
+    JADE_ASSERT(plaintext_out);
+    JADE_ASSERT(plaintext_len);
+
+    // Validate minimum length
+    if (encrypted_len < HSM_BIE1_MIN_LEN) {
+        JADE_LOGE("BIE1 ciphertext too short: %zu < %d", encrypted_len, HSM_BIE1_MIN_LEN);
+        return false;
+    }
+
+    // Validate magic
+    if (memcmp(encrypted, HSM_BIE1_MAGIC, HSM_BIE1_MAGIC_LEN) != 0) {
+        JADE_LOGE("Invalid BIE1 magic");
+        return false;
+    }
+
+    // Parse components
+    const uint8_t* ephemeral_pubkey = encrypted + HSM_BIE1_MAGIC_LEN;
+    size_t ciphertext_len = encrypted_len - HSM_BIE1_MAGIC_LEN - EC_PUBLIC_KEY_LEN - HSM_HMAC_SIZE;
+    const uint8_t* ciphertext = encrypted + HSM_BIE1_MAGIC_LEN + EC_PUBLIC_KEY_LEN;
+    const uint8_t* mac = encrypted + encrypted_len - HSM_HMAC_SIZE;
+
+    // Ciphertext must be block-aligned (AES-128-CBC)
+    if (ciphertext_len == 0 || ciphertext_len % 16 != 0) {
+        JADE_LOGE("Invalid BIE1 ciphertext length: %zu", ciphertext_len);
+        return false;
+    }
+
+    // Validate ephemeral pubkey
+    int ret = wally_ec_public_key_verify(ephemeral_pubkey, EC_PUBLIC_KEY_LEN);
+    if (ret != WALLY_OK) {
+        JADE_LOGE("Invalid ephemeral public key");
+        return false;
+    }
+
+    // Get our private key at this index
+    uint8_t privkey[EC_PRIVATE_KEY_LEN];
+    uint8_t our_pubkey[EC_PUBLIC_KEY_LEN];
+    SENSITIVE_PUSH(privkey, sizeof(privkey));
+
+    if (!hsm_derive_key(network, index, privkey, sizeof(privkey), our_pubkey, sizeof(our_pubkey))) {
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // ECDH: compute shared pubkey
+    uint8_t shared_pubkey[EC_PUBLIC_KEY_LEN];
+    SENSITIVE_PUSH(shared_pubkey, sizeof(shared_pubkey));
+
+    ret = wally_ecdh(ephemeral_pubkey, EC_PUBLIC_KEY_LEN,
+                     privkey, sizeof(privkey),
+                     shared_pubkey, sizeof(shared_pubkey));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("ECDH for BIE1 decryption failed: %d", ret);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // Key derivation: SHA512(shared_pubkey)
+    uint8_t shared_key[SHA512_LEN];
+    SENSITIVE_PUSH(shared_key, sizeof(shared_key));
+
+    ret = wally_sha512(shared_pubkey, sizeof(shared_pubkey), shared_key, sizeof(shared_key));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("SHA512 key derivation failed: %d", ret);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // Split key: iv[0:16], encKey[16:32], hashKey[32:64]
+    uint8_t* iv = shared_key;
+    uint8_t* enc_key = shared_key + 16;
+    uint8_t* hash_key = shared_key + 32;
+
+    // Verify HMAC BEFORE decrypting
+    uint8_t computed_hmac[HSM_HMAC_SIZE];
+    size_t data_to_mac_len = encrypted_len - HSM_HMAC_SIZE;
+
+    ret = wally_hmac_sha256(hash_key, 32, encrypted, data_to_mac_len, computed_hmac, sizeof(computed_hmac));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("HMAC-SHA256 computation failed: %d", ret);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    if (sodium_memcmp(mac, computed_hmac, HSM_HMAC_SIZE) != 0) {
+        JADE_LOGE("BIE1 HMAC verification failed");
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // AES-128-CBC decryption
+    if (plaintext_buf_len < ciphertext_len) {
+        JADE_LOGE("Plaintext buffer too small: need %zu, have %zu", ciphertext_len, plaintext_buf_len);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    mbedtls_cipher_context_t cipher;
+    mbedtls_cipher_init(&cipher);
+
+    ret = mbedtls_cipher_setup(&cipher, mbedtls_cipher_info_from_type(MBEDTLS_CIPHER_AES_128_CBC));
+    if (ret != 0) {
+        JADE_LOGE("AES cipher setup failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    ret = mbedtls_cipher_setkey(&cipher, enc_key, 128, MBEDTLS_DECRYPT);
+    if (ret != 0) {
+        JADE_LOGE("AES setkey failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    ret = mbedtls_cipher_set_iv(&cipher, iv, HSM_AES_CBC_IV_SIZE);
+    if (ret != 0) {
+        JADE_LOGE("AES set IV failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // No padding mode - we'll strip PKCS7 manually
+    ret = mbedtls_cipher_set_padding_mode(&cipher, MBEDTLS_PADDING_NONE);
+    if (ret != 0) {
+        JADE_LOGE("AES set padding mode failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    size_t olen = 0;
+    size_t finish_olen = 0;
+    ret = mbedtls_cipher_update(&cipher, ciphertext, ciphertext_len, plaintext_out, &olen);
+    if (ret != 0) {
+        JADE_LOGE("AES decrypt update failed: %d", ret);
+        mbedtls_cipher_free(&cipher);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    ret = mbedtls_cipher_finish(&cipher, plaintext_out + olen, &finish_olen);
+    mbedtls_cipher_free(&cipher);
+
+    if (ret != 0) {
+        JADE_LOGE("AES decrypt finish failed: %d", ret);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    size_t decrypted_len = olen + finish_olen;
+
+    // Strip PKCS7 padding
+    if (decrypted_len == 0) {
+        JADE_LOGE("Decrypted data is empty");
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    uint8_t pad_value = plaintext_out[decrypted_len - 1];
+    if (pad_value == 0 || pad_value > 16 || pad_value > decrypted_len) {
+        JADE_LOGE("Invalid PKCS7 padding value: %u", pad_value);
+        SENSITIVE_POP(shared_key);
+        SENSITIVE_POP(shared_pubkey);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // Verify all padding bytes
+    for (size_t i = decrypted_len - pad_value; i < decrypted_len; i++) {
+        if (plaintext_out[i] != pad_value) {
+            JADE_LOGE("Invalid PKCS7 padding at position %zu", i);
+            SENSITIVE_POP(shared_key);
+            SENSITIVE_POP(shared_pubkey);
+            SENSITIVE_POP(privkey);
+            return false;
+        }
+    }
+
+    *plaintext_len = decrypted_len - pad_value;
+
+    SENSITIVE_POP(shared_key);
+    SENSITIVE_POP(shared_pubkey);
+    SENSITIVE_POP(privkey);
+
+    hsm_increment_ops();
+    return true;
+}
+
+// Sign a 32-byte hash with compact ECDSA signature (65 bytes: recid+27+4 || R || S)
+// Format: [recid + 27 + 4 (for compressed)] + R(32) + S(32)
+bool hsm_sign_compact(hsm_network_t network, uint32_t index,
+                      const uint8_t* hash, size_t hash_len,
+                      uint8_t* signature_out, size_t sig_buf_len, size_t* sig_len)
+{
+    JADE_ASSERT(hash);
+    JADE_ASSERT(hash_len == SHA256_LEN);
+    JADE_ASSERT(signature_out);
+    JADE_ASSERT(sig_len);
+
+    if (sig_buf_len < HSM_COMPACT_SIG_SIZE) {
+        JADE_LOGE("Signature buffer too small: need %d, have %zu", HSM_COMPACT_SIG_SIZE, sig_buf_len);
+        return false;
+    }
+
+    uint8_t privkey[EC_PRIVATE_KEY_LEN];
+    uint8_t pubkey[EC_PUBLIC_KEY_LEN];
+    SENSITIVE_PUSH(privkey, sizeof(privkey));
+
+    if (!hsm_derive_key(network, index, privkey, sizeof(privkey), pubkey, sizeof(pubkey))) {
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // Sign with RECOVERABLE flag to get 65-byte signature (recid || R || S)
+    uint8_t sig_recoverable[EC_SIGNATURE_RECOVERABLE_LEN];
+    int ret = wally_ec_sig_from_bytes(privkey, sizeof(privkey), hash, hash_len,
+                                      EC_FLAG_ECDSA | EC_FLAG_RECOVERABLE,
+                                      sig_recoverable, sizeof(sig_recoverable));
+    if (ret != WALLY_OK) {
+        JADE_LOGE("ECDSA recoverable signing failed: %d", ret);
+        SENSITIVE_POP(privkey);
+        return false;
+    }
+
+    // The recoverable signature format from wally is: recid(1) || R(32) || S(32)
+    // We need to convert it to: (recid + 27 + 4)(1) || R(32) || S(32)
+    // where +27 is the Bitcoin base and +4 indicates compressed pubkey
+    int recid = sig_recoverable[0];
+
+    // Format: [recid + 27 + 4] || R(32) || S(32)
+    signature_out[0] = (uint8_t)(recid + 27 + 4);
+    memcpy(signature_out + 1, sig_recoverable + 1, 64);
+
+    *sig_len = HSM_COMPACT_SIG_SIZE;
+
+    SENSITIVE_POP(privkey);
     hsm_increment_ops();
     return true;
 }

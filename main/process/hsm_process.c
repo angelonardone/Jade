@@ -717,4 +717,282 @@ cleanup:
     return;
 }
 
+// hsm_encrypt_bie1 - BIE1 ECIES encryption (NBitcoin compatible)
+void hsm_encrypt_bie1_process(void* process_ptr)
+{
+    JADE_LOGI("Starting: hsm_encrypt_bie1");
+    jade_process_t* process = process_ptr;
+
+    ASSERT_CURRENT_MESSAGE(process, "hsm_encrypt_bie1");
+
+    if (!HSM_UNLOCKED_BY_MESSAGE_SOURCE(process)) {
+        jade_process_reject_message(process, HSM_ERROR_NOT_ACTIVE, "HSM mode not active");
+        goto cleanup;
+    }
+
+    GET_MSG_PARAMS(process);
+    const char* errmsg = NULL;
+
+    hsm_network_t network;
+    if (!get_network_param(&params, &network, &errmsg)) {
+        jade_process_reject_message(process, HSM_ERROR_INVALID_NETWORK, errmsg);
+        goto cleanup;
+    }
+
+    uint32_t index;
+    if (!get_index_param(&params, &index, &errmsg)) {
+        jade_process_reject_message(process, HSM_ERROR_INVALID_INDEX, errmsg);
+        goto cleanup;
+    }
+
+    // Get plaintext
+    const uint8_t* plaintext = NULL;
+    size_t plaintext_len = 0;
+    rpc_get_bytes_ptr("plaintext", &params, &plaintext, &plaintext_len);
+    if (!plaintext || plaintext_len == 0) {
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Missing or empty 'plaintext' parameter");
+        goto cleanup;
+    }
+
+    if (plaintext_len > HSM_MAX_PLAINTEXT_SIZE) {
+        jade_process_reject_message(process, HSM_ERROR_PAYLOAD_TOO_LARGE, "Plaintext exceeds maximum size (1024 bytes)");
+        goto cleanup;
+    }
+
+    // Get optional their_pubkey (for encrypting to another party)
+    const uint8_t* their_pubkey = NULL;
+    size_t their_pubkey_len = 0;
+    rpc_get_bytes_ptr("their_pubkey", &params, &their_pubkey, &their_pubkey_len);
+
+    // Calculate max output size and allocate buffer
+    size_t padded_len = ((plaintext_len / 16) + 1) * 16;
+    size_t max_output_len = HSM_BIE1_MAGIC_LEN + EC_PUBLIC_KEY_LEN + padded_len + HSM_HMAC_SIZE;
+    uint8_t* output = JADE_MALLOC(max_output_len);
+    size_t output_len = 0;
+
+    bool success = hsm_encrypt_bie1(network, index,
+                                    plaintext, plaintext_len,
+                                    their_pubkey, their_pubkey_len,
+                                    output, max_output_len, &output_len);
+
+    if (!success) {
+        free(output);
+        jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "BIE1 encryption failed");
+        goto cleanup;
+    }
+
+    // Build response with single blob
+    uint8_t buf[HSM_MAX_PLAINTEXT_SIZE + 256];
+    CborEncoder root_encoder;
+    cbor_encoder_init(&root_encoder, buf, sizeof(buf), 0);
+
+    CborEncoder root_map;
+    CborError cberr = cbor_encoder_create_map(&root_encoder, &root_map, 2);  // id + result
+    JADE_ASSERT(cberr == CborNoError);
+
+    const char* id = NULL;
+    size_t id_len = 0;
+    rpc_get_id_ptr(&process->ctx.value, &id, &id_len);
+    rpc_init_cbor(&root_map, id, id_len);
+
+    CborEncoder result_map;
+    cberr = cbor_encoder_create_map(&root_map, &result_map, 1);  // encrypted only
+    JADE_ASSERT(cberr == CborNoError);
+
+    add_bytes_to_map(&result_map, "encrypted", output, output_len);
+
+    cberr = cbor_encoder_close_container(&root_map, &result_map);
+    JADE_ASSERT(cberr == CborNoError);
+    cberr = cbor_encoder_close_container(&root_encoder, &root_map);
+    JADE_ASSERT(cberr == CborNoError);
+
+    const size_t cbor_len = cbor_encoder_get_buffer_size(&root_encoder, buf);
+    jade_process_reply_to_message_ex(process->ctx.source, buf, cbor_len);
+
+    free(output);
+    JADE_LOGI("Success");
+
+cleanup:
+    return;
+}
+
+// hsm_decrypt_bie1 - BIE1 ECIES decryption (NBitcoin compatible)
+void hsm_decrypt_bie1_process(void* process_ptr)
+{
+    JADE_LOGI("Starting: hsm_decrypt_bie1");
+    jade_process_t* process = process_ptr;
+
+    ASSERT_CURRENT_MESSAGE(process, "hsm_decrypt_bie1");
+
+    if (!HSM_UNLOCKED_BY_MESSAGE_SOURCE(process)) {
+        jade_process_reject_message(process, HSM_ERROR_NOT_ACTIVE, "HSM mode not active");
+        goto cleanup;
+    }
+
+    GET_MSG_PARAMS(process);
+    const char* errmsg = NULL;
+
+    hsm_network_t network;
+    if (!get_network_param(&params, &network, &errmsg)) {
+        jade_process_reject_message(process, HSM_ERROR_INVALID_NETWORK, errmsg);
+        goto cleanup;
+    }
+
+    uint32_t index;
+    if (!get_index_param(&params, &index, &errmsg)) {
+        jade_process_reject_message(process, HSM_ERROR_INVALID_INDEX, errmsg);
+        goto cleanup;
+    }
+
+    // Get encrypted blob
+    const uint8_t* encrypted = NULL;
+    size_t encrypted_len = 0;
+    rpc_get_bytes_ptr("encrypted", &params, &encrypted, &encrypted_len);
+    if (!encrypted || encrypted_len == 0) {
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Missing or empty 'encrypted' parameter");
+        goto cleanup;
+    }
+
+    if (encrypted_len < HSM_BIE1_MIN_LEN) {
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Encrypted data too short for BIE1 format");
+        goto cleanup;
+    }
+
+    // Allocate output buffer (max size is encrypted_len - overhead)
+    size_t max_plaintext_len = encrypted_len - HSM_BIE1_MAGIC_LEN - EC_PUBLIC_KEY_LEN - HSM_HMAC_SIZE;
+    uint8_t* plaintext = JADE_MALLOC(max_plaintext_len);
+    size_t plaintext_len = 0;
+
+    bool success = hsm_decrypt_bie1(network, index,
+                                    encrypted, encrypted_len,
+                                    plaintext, max_plaintext_len, &plaintext_len);
+
+    if (!success) {
+        free(plaintext);
+        jade_process_reject_message(process, HSM_ERROR_DECRYPT_FAILED, "BIE1 decryption failed");
+        goto cleanup;
+    }
+
+    // Build response
+    uint8_t buf[HSM_MAX_PLAINTEXT_SIZE + 128];
+    CborEncoder root_encoder;
+    cbor_encoder_init(&root_encoder, buf, sizeof(buf), 0);
+
+    CborEncoder root_map;
+    CborError cberr = cbor_encoder_create_map(&root_encoder, &root_map, 2);  // id + result
+    JADE_ASSERT(cberr == CborNoError);
+
+    const char* id = NULL;
+    size_t id_len = 0;
+    rpc_get_id_ptr(&process->ctx.value, &id, &id_len);
+    rpc_init_cbor(&root_map, id, id_len);
+
+    CborEncoder result_map;
+    cberr = cbor_encoder_create_map(&root_map, &result_map, 1);  // plaintext only
+    JADE_ASSERT(cberr == CborNoError);
+
+    add_bytes_to_map(&result_map, "plaintext", plaintext, plaintext_len);
+
+    cberr = cbor_encoder_close_container(&root_map, &result_map);
+    JADE_ASSERT(cberr == CborNoError);
+    cberr = cbor_encoder_close_container(&root_encoder, &root_map);
+    JADE_ASSERT(cberr == CborNoError);
+
+    const size_t cbor_len = cbor_encoder_get_buffer_size(&root_encoder, buf);
+    jade_process_reply_to_message_ex(process->ctx.source, buf, cbor_len);
+
+    free(plaintext);
+    JADE_LOGI("Success");
+
+cleanup:
+    return;
+}
+
+// hsm_sign_compact - Sign hash with compact ECDSA signature (65 bytes)
+void hsm_sign_compact_process(void* process_ptr)
+{
+    JADE_LOGI("Starting: hsm_sign_compact");
+    jade_process_t* process = process_ptr;
+
+    ASSERT_CURRENT_MESSAGE(process, "hsm_sign_compact");
+
+    if (!HSM_UNLOCKED_BY_MESSAGE_SOURCE(process)) {
+        jade_process_reject_message(process, HSM_ERROR_NOT_ACTIVE, "HSM mode not active");
+        goto cleanup;
+    }
+
+    GET_MSG_PARAMS(process);
+    const char* errmsg = NULL;
+
+    hsm_network_t network;
+    if (!get_network_param(&params, &network, &errmsg)) {
+        jade_process_reject_message(process, HSM_ERROR_INVALID_NETWORK, errmsg);
+        goto cleanup;
+    }
+
+    uint32_t index;
+    if (!get_index_param(&params, &index, &errmsg)) {
+        jade_process_reject_message(process, HSM_ERROR_INVALID_INDEX, errmsg);
+        goto cleanup;
+    }
+
+    // Get hash
+    const uint8_t* hash = NULL;
+    size_t hash_len = 0;
+    rpc_get_bytes_ptr("hash", &params, &hash, &hash_len);
+    if (!hash || hash_len != SHA256_LEN) {
+        jade_process_reject_message(process, CBOR_RPC_BAD_PARAMETERS, "Missing or invalid 'hash' parameter (must be 32 bytes)");
+        goto cleanup;
+    }
+
+    // Sign
+    uint8_t signature[HSM_COMPACT_SIG_SIZE];
+    size_t sig_len = 0;
+    if (!hsm_sign_compact(network, index, hash, hash_len, signature, sizeof(signature), &sig_len)) {
+        jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Compact signing failed");
+        goto cleanup;
+    }
+
+    // Get pubkey for response
+    uint8_t pubkey[EC_PUBLIC_KEY_LEN];
+    if (!hsm_get_pubkey(network, index, pubkey, sizeof(pubkey))) {
+        jade_process_reject_message(process, CBOR_RPC_INTERNAL_ERROR, "Failed to get public key");
+        goto cleanup;
+    }
+
+    // Build response
+    uint8_t buf[256];
+    CborEncoder root_encoder;
+    cbor_encoder_init(&root_encoder, buf, sizeof(buf), 0);
+
+    CborEncoder root_map;
+    CborError cberr = cbor_encoder_create_map(&root_encoder, &root_map, 2);  // id + result
+    JADE_ASSERT(cberr == CborNoError);
+
+    const char* id = NULL;
+    size_t id_len = 0;
+    rpc_get_id_ptr(&process->ctx.value, &id, &id_len);
+    rpc_init_cbor(&root_map, id, id_len);
+
+    CborEncoder result_map;
+    cberr = cbor_encoder_create_map(&root_map, &result_map, 2);  // signature + pubkey
+    JADE_ASSERT(cberr == CborNoError);
+
+    add_bytes_to_map(&result_map, "signature", signature, sig_len);
+    add_bytes_to_map(&result_map, "pubkey", pubkey, sizeof(pubkey));
+
+    cberr = cbor_encoder_close_container(&root_map, &result_map);
+    JADE_ASSERT(cberr == CborNoError);
+    cberr = cbor_encoder_close_container(&root_encoder, &root_map);
+    JADE_ASSERT(cberr == CborNoError);
+
+    const size_t cbor_len = cbor_encoder_get_buffer_size(&root_encoder, buf);
+    jade_process_reply_to_message_ex(process->ctx.source, buf, cbor_len);
+
+    JADE_LOGI("Success");
+
+cleanup:
+    return;
+}
+
 #endif // AMALGAMATED_BUILD

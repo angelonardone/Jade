@@ -243,6 +243,34 @@ try
                     Console.WriteLine($"  Path: {hsmXpub.Path}");
                     Console.WriteLine($"  XPub: {hsmXpub.Xpub}");
 
+                    // Test BIE1 ECIES encryption/decryption (NBitcoin compatible)
+                    Console.WriteLine("\n--- HSM BIE1 Encryption Test (NBitcoin compatible) ---");
+                    string bie1Message = "Hello, BIE1! This is NBitcoin-compatible encryption.";
+                    byte[] bie1Plaintext = System.Text.Encoding.UTF8.GetBytes(bie1Message);
+                    Console.WriteLine($"  Original message: {bie1Message}");
+
+                    // Encrypt using BIE1 format
+                    var bie1Encrypted = await rpc.HsmEncryptBie1Async("mainnet", 0, bie1Plaintext);
+                    Console.WriteLine($"  BIE1 blob ({bie1Encrypted.Length} bytes): {BitConverter.ToString(bie1Encrypted[..Math.Min(40, bie1Encrypted.Length)]).Replace("-", "").ToLowerInvariant()}...");
+                    string magic = System.Text.Encoding.ASCII.GetString(bie1Encrypted, 0, 4);
+                    Console.WriteLine($"  Magic: \"{magic}\" (expected: \"BIE1\")");
+
+                    // Decrypt BIE1
+                    var bie1Decrypted = await rpc.HsmDecryptBie1Async("mainnet", 0, bie1Encrypted);
+                    string bie1DecryptedMessage = System.Text.Encoding.UTF8.GetString(bie1Decrypted);
+                    Console.WriteLine($"  Decrypted: {bie1DecryptedMessage}");
+                    Console.WriteLine($"  BIE1 test: {(bie1DecryptedMessage == bie1Message ? "PASSED" : "FAILED")}");
+
+                    // Test compact ECDSA signing (NBitcoin compatible)
+                    Console.WriteLine("\n--- HSM Compact ECDSA Signing (NBitcoin compatible) ---");
+                    var compactSig = await rpc.HsmSignCompactAsync("mainnet", 0, testHash);
+                    Console.WriteLine($"  Compact signature ({compactSig.Length} bytes): {BitConverter.ToString(compactSig).Replace("-", "").ToLowerInvariant()}");
+                    int recoveryByte = compactSig[0];
+                    int recid = (recoveryByte - 27) & 3;
+                    bool compressed = ((recoveryByte - 27) & 4) != 0;
+                    Console.WriteLine($"  Recovery byte: 0x{recoveryByte:X2} (recid={recid}, compressed={compressed})");
+                    Console.WriteLine($"  Compact signature test: {(compactSig.Length == 65 && compressed ? "PASSED" : "FAILED")}");
+
                     // Check updated HSM info
                     hsmInfo = await rpc.HsmGetInfoAsync();
                     Console.WriteLine($"\n  Total HSM operations: {hsmInfo.OperationsCount}");

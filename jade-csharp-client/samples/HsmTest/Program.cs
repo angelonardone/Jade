@@ -404,7 +404,125 @@ class Program
             Console.WriteLine($"  FAIL: HSM operation failed: {ex.Message}");
         }
 
+        // Step 16: Test BIE1 ECIES Encryption (NBitcoin compatible)
+        Console.WriteLine("\n--- Step 16: BIE1 ECIES Encryption (NBitcoin compatible) ---");
+        string bie1Message = "Hello, BIE1! Testing NBitcoin-compatible encryption.";
+        byte[] bie1Plaintext = System.Text.Encoding.UTF8.GetBytes(bie1Message);
+        Console.WriteLine($"  Original message: \"{bie1Message}\"");
+
+        // Encrypt using BIE1 format
+        Console.WriteLine("\n  Encrypting with BIE1 format to self (index 0)...");
+        var bie1Encrypted = await rpc.HsmEncryptBie1Async("mainnet", 0, bie1Plaintext);
+        Console.WriteLine($"  BIE1 blob ({bie1Encrypted.Length} bytes): {ToHex(bie1Encrypted)}");
+        Console.WriteLine($"  BIE1 blob (Base64): {Convert.ToBase64String(bie1Encrypted)}");
+
+        // Verify BIE1 magic
+        string magic = System.Text.Encoding.ASCII.GetString(bie1Encrypted, 0, 4);
+        Console.WriteLine($"  Magic bytes: \"{magic}\" (expected: \"BIE1\")");
+        Console.WriteLine($"  Magic check: {(magic == "BIE1" ? "PASS" : "FAIL")}");
+
+        // Decrypt BIE1
+        Console.WriteLine("\n  Decrypting BIE1 format...");
+        var bie1Decrypted = await rpc.HsmDecryptBie1Async("mainnet", 0, bie1Encrypted);
+        string bie1DecryptedMessage = System.Text.Encoding.UTF8.GetString(bie1Decrypted);
+        Console.WriteLine($"  Decrypted message: \"{bie1DecryptedMessage}\"");
+        Console.WriteLine($"  BIE1 encryption/decryption test: {(bie1DecryptedMessage == bie1Message ? "PASS" : "FAIL")}");
+
+        // Step 17: Test BIE1 encryption to another key
+        Console.WriteLine("\n--- Step 17: BIE1 Encryption to Another Key ---");
+        var bie1RecipientPubkey = await rpc.HsmGetPubkeyAsync("mainnet", 1);
+        Console.WriteLine($"  Encrypting to index 1's pubkey: {ToHex(bie1RecipientPubkey.Pubkey)}");
+
+        var bie1EncryptedToOther = await rpc.HsmEncryptBie1Async("mainnet", 0, bie1Plaintext, bie1RecipientPubkey.Pubkey);
+        Console.WriteLine($"  Encrypted BIE1 blob ({bie1EncryptedToOther.Length} bytes)");
+
+        // Decrypt with recipient's key
+        var bie1DecryptedByRecipient = await rpc.HsmDecryptBie1Async("mainnet", 1, bie1EncryptedToOther);
+        string bie1DecryptedByRecipientMsg = System.Text.Encoding.UTF8.GetString(bie1DecryptedByRecipient);
+        Console.WriteLine($"  Decrypted by recipient: \"{bie1DecryptedByRecipientMsg}\"");
+        Console.WriteLine($"  Cross-key BIE1 test: {(bie1DecryptedByRecipientMsg == bie1Message ? "PASS" : "FAIL")}");
+
+        // Step 18: Test Compact ECDSA Signing (NBitcoin compatible)
+        Console.WriteLine("\n--- Step 18: Compact ECDSA Signing (NBitcoin compatible) ---");
+        byte[] compactTestHash = new byte[32];
+        Random.Shared.NextBytes(compactTestHash);
+        Console.WriteLine($"  Test hash: {ToHex(compactTestHash)}");
+
+        var compactSig = await rpc.HsmSignCompactAsync("mainnet", 0, compactTestHash);
+        Console.WriteLine($"  Compact signature ({compactSig.Length} bytes): {ToHex(compactSig)}");
+        Console.WriteLine($"  Signature length check: {(compactSig.Length == 65 ? "PASS" : "FAIL")} (expected: 65)");
+
+        // Verify recovery byte format
+        int recoveryByte = compactSig[0];
+        int recid = (recoveryByte - 27) & 3;
+        bool compressed = ((recoveryByte - 27) & 4) != 0;
+        Console.WriteLine($"  Recovery byte: 0x{recoveryByte:X2} (recid={recid}, compressed={compressed})");
+        Console.WriteLine($"  Compressed flag check: {(compressed ? "PASS" : "FAIL")} (expected: true)");
+
+        // Step 19: Test with NBitcoin Known Test Vectors
+        Console.WriteLine("\n--- Step 19: NBitcoin Known Test Vectors ---");
+        Console.WriteLine("  NOTE: These tests require the SAME mnemonic as NBitcoin test vectors.");
+        Console.WriteLine("  If using a different mnemonic, these will fail but the format should be correct.\n");
+
+        // Test vector for decrypt
+        string testVectorEncrypted = "QklFMQKPZJ1HCXabA1//qTgLXe+yKU6ODjymsxAB+dKkA8jOxFbU2duFKNQfF6gmLcY6dNB4A9GZXYcVBogFNz/8EtRSSESz26oHp27qtgvH3hn8mo68suj2nG42Oqkvl280DrA3Niqm2XXsiOMcni8JOLk0";
+        string expectedPlaintext = "my name is Distributd Crpyptography";
+
+        Console.WriteLine("  Decrypt test vector:");
+        Console.WriteLine($"    Encrypted (Base64): {testVectorEncrypted.Substring(0, 40)}...");
+        Console.WriteLine($"    Expected plaintext: \"{expectedPlaintext}\"");
+
+        try
+        {
+            var testVectorBytes = Convert.FromBase64String(testVectorEncrypted);
+            var decryptedTestVector = await rpc.HsmDecryptBie1Async("mainnet", 0, testVectorBytes);
+            string decryptedTestVectorStr = System.Text.Encoding.UTF8.GetString(decryptedTestVector);
+            Console.WriteLine($"    Actual plaintext: \"{decryptedTestVectorStr}\"");
+            Console.WriteLine($"    Test vector decrypt: {(decryptedTestVectorStr == expectedPlaintext ? "PASS" : "FAIL (different mnemonic?)")}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    Decrypt failed: {ex.Message}");
+            Console.WriteLine($"    This is expected if using a different mnemonic than the test vectors.");
+        }
+
+        // Test vector for sign
+        string testVectorHash = "e5e100401f2c1c6b3b6be4886746c59f60a5c79f9f31fa42b702b36a74855162";
+        string expectedSig = "1f3a0e6eafb0f32fded14c06602de6f8a5eee381e5d955011ad3553dc459748e23c6d05917c619eec416f350c6da28d2e9273103fbe57a319227c4e84ecc1d76";
+
+        Console.WriteLine($"\n  Sign test vector:");
+        Console.WriteLine($"    Hash: {testVectorHash}");
+        Console.WriteLine($"    Expected signature: {expectedSig.Substring(0, 40)}...");
+
+        byte[] testVectorHashBytes = FromHex(testVectorHash);
+        var testVectorSig = await rpc.HsmSignCompactAsync("mainnet", 0, testVectorHashBytes);
+        string actualSig = ToHex(testVectorSig);
+        Console.WriteLine($"    Actual signature: {actualSig.Substring(0, 40)}...");
+        Console.WriteLine($"    Test vector sign: {(actualSig == expectedSig ? "PASS" : "FAIL (different mnemonic?)")}");
+
+        // Test vector for pubkey
+        string expectedPubkey = "032c4a5797a6772ceee16775eccdea5625ffc9bd9f3ad71d3a427167ee494f40c0";
+
+        Console.WriteLine($"\n  GetPubKey test vector:");
+        Console.WriteLine($"    Expected pubkey at index 0: {expectedPubkey}");
+
+        var pubkeyResult = await rpc.HsmGetPubkeyAsync("mainnet", 0);
+        string actualPubkey = ToHex(pubkeyResult.Pubkey);
+        Console.WriteLine($"    Actual pubkey at index 0: {actualPubkey}");
+        Console.WriteLine($"    Test vector pubkey: {(actualPubkey == expectedPubkey ? "PASS" : "FAIL (different mnemonic?)")}");
+
         Console.WriteLine($"\n--- Run #{runNumber} Complete ---");
+    }
+
+    static byte[] FromHex(string hex)
+    {
+        hex = hex.Replace(" ", "").Replace("-", "");
+        byte[] bytes = new byte[hex.Length / 2];
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
+        }
+        return bytes;
     }
 
     static string ToHex(byte[] bytes)

@@ -222,6 +222,106 @@ public class JadeHsmService : IJadeHsmService, IDisposable
         }
     }
 
+    // BIE1 ECIES encryption - message string -> Base64 encrypted blob
+    public async Task<string> EncryptBie1Async(string message, int indexKey, CancellationToken ct = default)
+    {
+        var plaintext = System.Text.Encoding.UTF8.GetBytes(message);
+        if (plaintext.Length > 1024)
+            throw new ArgumentException("Message must not exceed 1024 bytes when UTF-8 encoded");
+
+        await _semaphore.WaitAsync(ct);
+        try
+        {
+            var result = await _rpc.HsmEncryptBie1Async("mainnet", (uint)indexKey, plaintext, null, ct);
+            return Convert.ToBase64String(result);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    // BIE1 ECIES encryption to specific pubkey - message string -> Base64 encrypted blob
+    public async Task<string> EncryptBie1ToPubKeyAsync(string message, string publicKey, CancellationToken ct = default)
+    {
+        var plaintext = System.Text.Encoding.UTF8.GetBytes(message);
+        if (plaintext.Length > 1024)
+            throw new ArgumentException("Message must not exceed 1024 bytes when UTF-8 encoded");
+
+        var theirPubkey = FromHex(publicKey);
+        if (theirPubkey.Length != 33 && theirPubkey.Length != 65)
+            throw new ArgumentException("Public key must be 33 (compressed) or 65 (uncompressed) bytes");
+
+        await _semaphore.WaitAsync(ct);
+        try
+        {
+            // Use index 0 but encrypt to the specified pubkey
+            var result = await _rpc.HsmEncryptBie1Async("mainnet", 0, plaintext, theirPubkey, ct);
+            return Convert.ToBase64String(result);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    // BIE1 ECIES decryption - Base64 encrypted blob -> plaintext string
+    public async Task<string> DecryptBie1Async(string encryptedMessage, int indexKey, CancellationToken ct = default)
+    {
+        var encrypted = Convert.FromBase64String(encryptedMessage);
+        if (encrypted.Length < 85)
+            throw new ArgumentException("Encrypted data too short for BIE1 format (minimum 85 bytes)");
+
+        await _semaphore.WaitAsync(ct);
+        try
+        {
+            var plaintext = await _rpc.HsmDecryptBie1Async("mainnet", (uint)indexKey, encrypted, ct);
+            return System.Text.Encoding.UTF8.GetString(plaintext);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    // Compact ECDSA signing - hex hash -> hex compact signature (65 bytes)
+    public async Task<string> SignCompactAsync(string hashHex, int indexKey, CancellationToken ct = default)
+    {
+        var hash = FromHex(hashHex);
+        if (hash.Length != 32)
+            throw new ArgumentException("Hash must be 32 bytes (64 hex characters)");
+
+        await _semaphore.WaitAsync(ct);
+        try
+        {
+            var sig = await _rpc.HsmSignCompactAsync("mainnet", (uint)indexKey, hash, ct);
+            return ToHex(sig);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
+    // Schnorr signing - hex hash -> hex Schnorr signature (64 bytes)
+    public async Task<string> SignSchnorrAsync(string hashHex, int indexKey, CancellationToken ct = default)
+    {
+        var hash = FromHex(hashHex);
+        if (hash.Length != 32)
+            throw new ArgumentException("Hash must be 32 bytes (64 hex characters)");
+
+        await _semaphore.WaitAsync(ct);
+        try
+        {
+            var result = await _rpc.HsmSignAsync("mainnet", (uint)indexKey, hash, "schnorr", ct);
+            return ToHex(result.Signature);
+        }
+        finally
+        {
+            _semaphore.Release();
+        }
+    }
+
     private static string ToHex(byte[] bytes)
     {
         return BitConverter.ToString(bytes).Replace("-", "").ToLowerInvariant();

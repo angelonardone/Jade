@@ -206,9 +206,16 @@ try
     Console.WriteLine($"  GET  /api/hsm/xpub/{{network}}           - Get extended public key");
     Console.WriteLine($"  POST /api/hsm/sign                    - Sign a hash");
     Console.WriteLine($"  POST /api/hsm/ecdh                    - Compute ECDH shared secret");
-    Console.WriteLine($"  POST /api/hsm/encrypt                 - ECIES encryption");
-    Console.WriteLine($"  POST /api/hsm/decrypt                 - ECIES decryption");
+    Console.WriteLine($"  POST /api/hsm/encrypt                 - ECIES encryption (AES-GCM)");
+    Console.WriteLine($"  POST /api/hsm/decrypt                 - ECIES decryption (AES-GCM)");
     Console.WriteLine($"  POST /api/hsm/lock                    - Lock HSM mode");
+    Console.WriteLine("\n  NBitcoin-compatible REST API (at /HSM/rest):");
+    Console.WriteLine($"  GET  /HSM/rest/getPubKey              - Get public key (BIE1)");
+    Console.WriteLine($"  POST /HSM/rest/encrypt                - BIE1 ECIES encryption");
+    Console.WriteLine($"  POST /HSM/rest/encryptToPubKey        - BIE1 ECIES encryption to pubkey");
+    Console.WriteLine($"  POST /HSM/rest/decrypt                - BIE1 ECIES decryption");
+    Console.WriteLine($"  POST /HSM/rest/sign                   - Compact ECDSA signature");
+    Console.WriteLine($"  POST /HSM/rest/SignSchnorr            - Schnorr signature");
     Console.WriteLine("\nPress Ctrl+C to stop the server.\n");
 
     // Handle graceful shutdown

@@ -178,6 +178,9 @@ void hsm_ecdh_process(void* process_ptr);
 void hsm_encrypt_process(void* process_ptr);
 void hsm_decrypt_process(void* process_ptr);
 void hsm_lock_process(void* process_ptr);
+void hsm_encrypt_bie1_process(void* process_ptr);
+void hsm_decrypt_bie1_process(void* process_ptr);
+void hsm_sign_compact_process(void* process_ptr);
 
 // Home screen
 gui_activity_t* make_home_screen_activity(const char* device_name, const char* firmware_version,
@@ -650,6 +653,12 @@ static void dispatch_message(jade_process_t* process)
             task_function = hsm_decrypt_process;
         } else if (IS_METHOD("hsm_lock")) {
             task_function = hsm_lock_process;
+        } else if (IS_METHOD("hsm_encrypt_bie1")) {
+            task_function = hsm_encrypt_bie1_process;
+        } else if (IS_METHOD("hsm_decrypt_bie1")) {
+            task_function = hsm_decrypt_bie1_process;
+        } else if (IS_METHOD("hsm_sign_compact")) {
+            task_function = hsm_sign_compact_process;
         } else if (IS_METHOD("ota_data") || IS_METHOD("ota_complete") || IS_METHOD("tx_input")
             || IS_METHOD("get_extended_data") || IS_METHOD("get_signature") || IS_METHOD("pin")) {
             // Method we only expect as part of a multi-message protocol
