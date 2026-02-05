@@ -1,5 +1,6 @@
 using HSMbridge.Models;
 using JadeClient.Protocol;
+using System.Security.Cryptography;
 
 namespace HSMbridge.Services;
 
@@ -284,17 +285,25 @@ public class JadeHsmService : IJadeHsmService, IDisposable
         }
     }
 
-    // Compact ECDSA signing - hex hash -> hex compact signature (65 bytes)
-    public async Task<string> SignCompactAsync(string hashHex, int indexKey, CancellationToken ct = default)
+    // Compact ECDSA signing - message string -> hex compact signature (64 bytes R || S)
+    // Matches NBitcoin behavior: DoubleSHA256(UTF8(message)), then SignCompact, return Signature (R||S)
+    public async Task<string> SignCompactAsync(string message, int indexKey, CancellationToken ct = default)
     {
-        var hash = FromHex(hashHex);
-        if (hash.Length != 32)
-            throw new ArgumentException("Hash must be 32 bytes (64 hex characters)");
+        // NBitcoin behavior: hash the message string with DoubleSHA256
+        var msgBytes = System.Text.Encoding.UTF8.GetBytes(message);
+        var hash = DoubleSHA256(msgBytes);
 
         await _semaphore.WaitAsync(ct);
         try
         {
             var sig = await _rpc.HsmSignCompactAsync("mainnet", (uint)indexKey, hash, ct);
+            // Strip the first byte (recovery byte) to match NBitcoin format
+            // Jade returns: recovery(1) || R(32) || S(32) = 65 bytes
+            // NBitcoin's SignCompact().Signature returns: R(32) || S(32) = 64 bytes
+            if (sig.Length == 65)
+            {
+                return ToHex(sig.AsSpan(1).ToArray());
+            }
             return ToHex(sig);
         }
         finally
@@ -303,12 +312,13 @@ public class JadeHsmService : IJadeHsmService, IDisposable
         }
     }
 
-    // Schnorr signing - hex hash -> hex Schnorr signature (64 bytes)
-    public async Task<string> SignSchnorrAsync(string hashHex, int indexKey, CancellationToken ct = default)
+    // Schnorr signing - message string -> hex Schnorr signature (64 bytes)
+    // Matches NBitcoin behavior: DoubleSHA256(UTF8(message)), then SignTaprootKeySpend
+    public async Task<string> SignSchnorrAsync(string message, int indexKey, CancellationToken ct = default)
     {
-        var hash = FromHex(hashHex);
-        if (hash.Length != 32)
-            throw new ArgumentException("Hash must be 32 bytes (64 hex characters)");
+        // NBitcoin behavior: hash the message string with DoubleSHA256
+        var msgBytes = System.Text.Encoding.UTF8.GetBytes(message);
+        var hash = DoubleSHA256(msgBytes);
 
         await _semaphore.WaitAsync(ct);
         try
@@ -320,6 +330,14 @@ public class JadeHsmService : IJadeHsmService, IDisposable
         {
             _semaphore.Release();
         }
+    }
+
+    // DoubleSHA256 = SHA256(SHA256(data)) - matches NBitcoin.Crypto.Hashes.DoubleSHA256
+    private static byte[] DoubleSHA256(byte[] data)
+    {
+        using var sha256 = SHA256.Create();
+        var first = sha256.ComputeHash(data);
+        return sha256.ComputeHash(first);
     }
 
     private static string ToHex(byte[] bytes)

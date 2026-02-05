@@ -577,7 +577,8 @@ static void dispatch_message(jade_process_t* process)
         // HSM operations are allowed when HSM mode is active, even without keychain
         const bool hsm_method = IS_METHOD("hsm_get_info") || IS_METHOD("hsm_get_pubkey")
             || IS_METHOD("hsm_get_xpub") || IS_METHOD("hsm_sign") || IS_METHOD("hsm_ecdh")
-            || IS_METHOD("hsm_encrypt") || IS_METHOD("hsm_decrypt") || IS_METHOD("hsm_lock");
+            || IS_METHOD("hsm_encrypt") || IS_METHOD("hsm_decrypt") || IS_METHOD("hsm_lock")
+            || IS_METHOD("hsm_encrypt_bie1") || IS_METHOD("hsm_decrypt_bie1") || IS_METHOD("hsm_sign_compact");
         const bool hsm_active = hsm_is_active();
         const bool hsm_allowed = hsm_method && hsm_active;
 

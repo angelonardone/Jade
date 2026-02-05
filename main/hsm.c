@@ -18,6 +18,65 @@
 #include <wally_core.h>
 #include <wally_crypto.h>
 
+// For raw ECDH (BIE1 NBitcoin compatibility)
+#include <secp256k1.h>
+#include <secp256k1_ecdh.h>
+
+// Custom ECDH hash function that returns compressed pubkey (33 bytes)
+// instead of SHA256(x). This matches NBitcoin's BIE1 ECIES implementation.
+// Output: 0x02/0x03 prefix (1 byte) + x coordinate (32 bytes) = 33 bytes
+static int ecdh_hash_function_compressed_point(
+    unsigned char *output,
+    const unsigned char *x32,
+    const unsigned char *y32,
+    void *data
+) {
+    (void)data;  // unused
+    // Determine prefix based on y coordinate parity
+    // y is even -> 0x02, y is odd -> 0x03
+    output[0] = (y32[31] & 1) ? 0x03 : 0x02;
+    memcpy(output + 1, x32, 32);
+    return 1;
+}
+
+// Compute raw ECDH and return the compressed shared pubkey (33 bytes)
+// This matches NBitcoin's GetSharedPubkey().ToBytes() behavior
+static bool ecdh_shared_pubkey(
+    const uint8_t* their_pubkey, size_t their_pubkey_len,
+    const uint8_t* our_privkey, size_t our_privkey_len,
+    uint8_t* shared_pubkey_out, size_t shared_pubkey_len
+) {
+    JADE_ASSERT(their_pubkey);
+    JADE_ASSERT(their_pubkey_len == EC_PUBLIC_KEY_LEN);
+    JADE_ASSERT(our_privkey);
+    JADE_ASSERT(our_privkey_len == EC_PRIVATE_KEY_LEN);
+    JADE_ASSERT(shared_pubkey_out);
+    JADE_ASSERT(shared_pubkey_len == EC_PUBLIC_KEY_LEN);  // 33 bytes
+
+    // Get secp256k1 context
+    secp256k1_context* ctx = wally_get_secp_context();
+    if (!ctx) {
+        JADE_LOGE("Failed to get secp256k1 context");
+        return false;
+    }
+
+    // Parse their public key
+    secp256k1_pubkey pubkey;
+    if (!secp256k1_ec_pubkey_parse(ctx, &pubkey, their_pubkey, their_pubkey_len)) {
+        JADE_LOGE("Failed to parse public key for ECDH");
+        return false;
+    }
+
+    // Compute ECDH with custom hash function that returns compressed pubkey
+    if (!secp256k1_ecdh(ctx, shared_pubkey_out, &pubkey, our_privkey,
+                        ecdh_hash_function_compressed_point, NULL)) {
+        JADE_LOGE("secp256k1_ecdh failed");
+        return false;
+    }
+
+    return true;
+}
+
 // Static HSM keychain
 static hsm_keychain_t hsm_keychain;
 
@@ -365,7 +424,8 @@ bool hsm_sign(hsm_network_t network, uint32_t index, hsm_algo_t algo,
 
     int ret;
     if (algo == HSM_ALGO_SCHNORR) {
-        // BIP-340 Schnorr signature (64 bytes)
+        // BIP-340 Schnorr signature (64 bytes) with auxiliary randomness
+        // Using aux_rand makes the signature non-deterministic for side-channel protection
         if (sig_out_len < EC_SIGNATURE_LEN) {
             JADE_LOGE("Output buffer too small for Schnorr signature");
             SENSITIVE_POP(privkey);
@@ -375,8 +435,9 @@ bool hsm_sign(hsm_network_t network, uint32_t index, hsm_algo_t algo,
         uint8_t aux_rand[32];
         get_random(aux_rand, sizeof(aux_rand));
 
-        ret = wally_ec_sig_from_bytes(privkey, sizeof(privkey), hash, hash_len,
-                                      EC_FLAG_SCHNORR, signature_out, EC_SIGNATURE_LEN);
+        ret = wally_ec_sig_from_bytes_aux(privkey, sizeof(privkey), hash, hash_len,
+                                          aux_rand, sizeof(aux_rand),
+                                          EC_FLAG_SCHNORR, signature_out, EC_SIGNATURE_LEN);
         if (ret != WALLY_OK) {
             JADE_LOGE("Schnorr signing failed: %d", ret);
             SENSITIVE_POP(privkey);
@@ -740,16 +801,16 @@ bool hsm_encrypt_bie1(hsm_network_t network, uint32_t index,
         }
     }
 
-    // ECDH: compute shared pubkey (not just x-coordinate)
+    // ECDH: compute shared pubkey (full compressed point, not just x-coordinate)
     // NBitcoin uses GetSharedPubkey which returns the full compressed pubkey after ECDH
     uint8_t shared_pubkey[EC_PUBLIC_KEY_LEN];
     SENSITIVE_PUSH(shared_pubkey, sizeof(shared_pubkey));
 
-    ret = wally_ecdh(recipient_pubkey, sizeof(recipient_pubkey),
-                     ephemeral_privkey, sizeof(ephemeral_privkey),
-                     shared_pubkey, sizeof(shared_pubkey));
-    if (ret != WALLY_OK) {
-        JADE_LOGE("ECDH for BIE1 encryption failed: %d", ret);
+    bool ecdh_ok = ecdh_shared_pubkey(recipient_pubkey, sizeof(recipient_pubkey),
+                                       ephemeral_privkey, sizeof(ephemeral_privkey),
+                                       shared_pubkey, sizeof(shared_pubkey));
+    if (!ecdh_ok) {
+        JADE_LOGE("ECDH for BIE1 encryption failed");
         SENSITIVE_POP(shared_pubkey);
         SENSITIVE_POP(ephemeral_privkey);
         return false;
@@ -944,15 +1005,16 @@ bool hsm_decrypt_bie1(hsm_network_t network, uint32_t index,
         return false;
     }
 
-    // ECDH: compute shared pubkey
+    // ECDH: compute shared pubkey (full compressed point, not just x-coordinate)
+    // NBitcoin uses GetSharedPubkey which returns the full compressed pubkey after ECDH
     uint8_t shared_pubkey[EC_PUBLIC_KEY_LEN];
     SENSITIVE_PUSH(shared_pubkey, sizeof(shared_pubkey));
 
-    ret = wally_ecdh(ephemeral_pubkey, EC_PUBLIC_KEY_LEN,
-                     privkey, sizeof(privkey),
-                     shared_pubkey, sizeof(shared_pubkey));
-    if (ret != WALLY_OK) {
-        JADE_LOGE("ECDH for BIE1 decryption failed: %d", ret);
+    bool ecdh_ok = ecdh_shared_pubkey(ephemeral_pubkey, EC_PUBLIC_KEY_LEN,
+                                       privkey, sizeof(privkey),
+                                       shared_pubkey, sizeof(shared_pubkey));
+    if (!ecdh_ok) {
+        JADE_LOGE("ECDH for BIE1 decryption failed");
         SENSITIVE_POP(shared_pubkey);
         SENSITIVE_POP(privkey);
         return false;

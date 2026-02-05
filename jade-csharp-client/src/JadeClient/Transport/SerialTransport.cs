@@ -59,8 +59,8 @@ public class SerialTransport : IJadeTransport
                     ReadTimeout = SerialPort.InfiniteTimeout,
                     WriteTimeout = 30000,
                     Handshake = Handshake.None,
-                    DtrEnable = false,
-                    RtsEnable = false
+                    DtrEnable = true,
+                    RtsEnable = true
                 };
 
                 _serialPort.Open();

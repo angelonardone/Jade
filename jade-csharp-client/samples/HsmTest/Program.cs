@@ -506,8 +506,8 @@ class Program
         Console.WriteLine($"\n  GetPubKey test vector:");
         Console.WriteLine($"    Expected pubkey at index 0: {expectedPubkey}");
 
-        var pubkeyResult = await rpc.HsmGetPubkeyAsync("mainnet", 0);
-        string actualPubkey = ToHex(pubkeyResult.Pubkey);
+        var testVectorPubkey = await rpc.HsmGetPubkeyAsync("mainnet", 0);
+        string actualPubkey = ToHex(testVectorPubkey.Pubkey);
         Console.WriteLine($"    Actual pubkey at index 0: {actualPubkey}");
         Console.WriteLine($"    Test vector pubkey: {(actualPubkey == expectedPubkey ? "PASS" : "FAIL (different mnemonic?)")}");
 
