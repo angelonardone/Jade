@@ -423,7 +423,7 @@ Deactivates HSM mode on the device. After locking, the device returns to normal 
 
 ## Distributed Cryptography-Compatible REST API (`/HSM/rest`)
 
-HSMbridge also exposes an NBitcoin-compatible REST API that matches the [DistributedCryptographyLib](https://github.com/nickkuk/DistributedCryptographyLib) API specification. This allows Jade to act as a drop-in replacement for NBitcoin-based HSM services.
+HSMbridge also exposes an NBitcoin-compatible REST API that matches the [DistributedCryptographyLib](https://github.com/angelonardone/NBitcoin/tree/master/DistricutedCryptographyLib) API specification. This allows Jade to act as a drop-in replacement for NBitcoin-based HSM services.
 
 **Key differences from `/api/hsm` endpoints:**
 
